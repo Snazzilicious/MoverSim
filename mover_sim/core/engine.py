@@ -76,6 +76,7 @@ class SimulationEngine:
         self.broker = EventBroker()
         self.platforms = {}
         self.max_step = 1.0  # Default maximum step size for continuous integration
+        self.running = False
         self._solver_reset_flag = False
 
     def schedule(self, time, callback, name=None, interval=None):
@@ -89,6 +90,9 @@ class SimulationEngine:
         Register a platform in the simulation.
         """
         self.platforms[platform.id] = platform
+        # If simulation is already running, initialize its controller
+        if self.running and platform.controller:
+            platform.controller.initialize(self)
         self.broker.publish("platform_registered", platform)
 
     def flag_solver_reset(self):
@@ -97,6 +101,12 @@ class SimulationEngine:
         requiring the continuous solver to be reset at the next step.
         """
         self._solver_reset_flag = True
+
+    def stop(self):
+        """
+        Stop the simulation execution early.
+        """
+        self.running = False
 
     def step_continuous(self, t_target):
         """
@@ -152,7 +162,7 @@ class SimulationEngine:
         solver = RK45(ode_fun, self.t, y0, t_bound=t_target, max_step=max_step_limit)
 
         # 3. Integrate state up to t_target
-        while solver.t < t_target and solver.status == "running":
+        while self.running and solver.t < t_target and solver.status == "running":
             solver.step()
             self.t = solver.t
 
@@ -167,8 +177,8 @@ class SimulationEngine:
 
             self.broker.publish("position_updated", self.t)
 
-        # Ensure we are exactly at the target time
-        if np.abs(self.t - t_target) > 1e-9:
+        # Ensure we are exactly at the target time if we are still running
+        if self.running and np.abs(self.t - t_target) > 1e-9:
             self.t = t_target
             for platform in self.platforms.values():
                 if isinstance(platform.mover, AnalyticalMover):
@@ -179,6 +189,8 @@ class SimulationEngine:
         """
         Run the simulation from the current time up to t_end.
         """
+        self.running = True
+        
         # Initialize all platform controllers before beginning
         for platform in list(self.platforms.values()):
             if platform.controller:
@@ -186,7 +198,7 @@ class SimulationEngine:
 
         self.broker.publish("sim_start", self.t)
         
-        while self.t < t_end:
+        while self.running and self.t < t_end:
             t_next_event = self.scheduler.peek_next_time()
             
             # Determine the target time for this step
@@ -200,7 +212,7 @@ class SimulationEngine:
                 self.step_continuous(t_target)
                 
             # 2. Execute any discrete events scheduled at this time
-            while True:
+            while self.running:
                 t_next = self.scheduler.peek_next_time()
                 if t_next is None or t_next > self.t:
                     break
@@ -214,3 +226,4 @@ class SimulationEngine:
                     self.schedule(self.t + event.interval, event.callback, event.name, event.interval)
                     
         self.broker.publish("sim_end", self.t)
+        self.running = False
