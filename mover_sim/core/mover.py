@@ -58,6 +58,18 @@ class NewtonianMover(Mover):
     """
     Base class for movers whose motion is integrated numerically using an ODE solver.
     """
+    def __init__(self, initial_position, initial_velocity=None, enable_gravity=False, enable_coriolis=False):
+        """
+        Parameters:
+            initial_position: ECEF coordinates [X, Y, Z] in meters.
+            initial_velocity: ECEF velocity [Vx, Vy, Vz] in m/s.
+            enable_gravity: If True, applies standard gravitational forces in derivative calculations.
+            enable_coriolis: If True, applies Coriolis forces in derivative calculations.
+        """
+        super().__init__(initial_position, initial_velocity)
+        self.enable_gravity = enable_gravity
+        self.enable_coriolis = enable_coriolis
+
     def get_state_dimension(self):
         """
         Returns the number of state variables (typically 6: X, Y, Z, Vx, Vy, Vz).
@@ -90,5 +102,15 @@ class NewtonianMover(Mover):
             dpos: Position derivatives [Vx, Vy, Vz] (3,).
             dvel: Velocity derivatives (accelerations) [Ax, Ay, Az] (3,).
         """
-        # Default implementation: Constant velocity (zero acceleration)
-        return vel, np.zeros(3)
+        dpos = vel
+        dvel = np.zeros(3)
+        
+        if self.enable_gravity:
+            from mover_sim.math.physics import gravity
+            dvel += gravity(pos)
+            
+        if self.enable_coriolis:
+            from mover_sim.math.physics import coriolis_acceleration
+            dvel += coriolis_acceleration(vel)
+            
+        return dpos, dvel
