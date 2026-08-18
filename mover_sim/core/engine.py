@@ -1,6 +1,9 @@
 import heapq
 import itertools
+import numpy as np
+from scipy.integrate import RK45
 from mover_sim.core.broker import EventBroker
+from mover_sim.core.mover import NewtonianMover, AnalyticalMover
 
 class Event:
     """
@@ -72,6 +75,7 @@ class SimulationEngine:
         self.scheduler = EventScheduler()
         self.broker = EventBroker()
         self.platforms = {}
+        self.max_step = 1.0  # Default maximum step size for continuous integration
         self._solver_reset_flag = False
 
     def schedule(self, time, callback, name=None, interval=None):
@@ -97,17 +101,89 @@ class SimulationEngine:
     def step_continuous(self, t_target):
         """
         Advance continuous state to t_target.
-        Note: Continuous physics (ODE solver integration) will be implemented in Phase 3.
-        For now, simply advance the simulation clock.
+        Integrates NewtonianMovers using scipy.integrate.RK45.
+        Updates AnalyticalMovers directly to the target/stepped time.
         """
-        self.t = t_target
-        # Publish position/state updates to subscribers
-        self.broker.publish("position_updated", self.t)
+        # 1. Identify active Newtonian movers
+        active_movers = []
+        y_list = []
+        idx = 0
+        for platform in self.platforms.values():
+            if isinstance(platform.mover, NewtonianMover):
+                active_movers.append((platform.mover, idx))
+                y_list.append(platform.mover.get_state())
+                idx += 6
+
+        # If no Newtonian movers exist, just update time and analytical movers
+        if not active_movers:
+            self.t = t_target
+            for platform in self.platforms.values():
+                if isinstance(platform.mover, AnalyticalMover):
+                    platform.mover.update(self.t)
+            self.broker.publish("position_updated", self.t)
+            return
+
+        # Safety: if time step is too small, just advance analytically to avoid RK45 errors
+        if t_target - self.t < 1e-9:
+            self.t = t_target
+            for platform in self.platforms.values():
+                if isinstance(platform.mover, AnalyticalMover):
+                    platform.mover.update(self.t)
+            self.broker.publish("position_updated", self.t)
+            return
+
+        y0 = np.concatenate(y_list)
+
+        # 2. Define the combined derivative function
+        def ode_fun(t, y):
+            dy = np.zeros_like(y)
+            for mover, start in active_movers:
+                pos = y[start : start + 3]
+                vel = y[start + 3 : start + 6]
+                dpos, dvel = mover.compute_derivatives(t, pos, vel)
+                dy[start : start + 3] = dpos
+                dy[start + 3 : start + 6] = dvel
+            return dy
+
+        # Determine integration constraints
+        max_step_limit = min(self.max_step, t_target - self.t) if self.max_step else (t_target - self.t)
+        
+        # Initialize RK45 integration solver
+        solver = RK45(ode_fun, self.t, y0, t_bound=t_target, max_step=max_step_limit)
+
+        # 3. Integrate state up to t_target
+        while solver.t < t_target and solver.status == "running":
+            solver.step()
+            self.t = solver.t
+
+            # Write integrated state back to Newtonian movers
+            for mover, start in active_movers:
+                mover.set_state(solver.y[start : start + 6])
+
+            # Update analytical movers
+            for platform in self.platforms.values():
+                if isinstance(platform.mover, AnalyticalMover):
+                    platform.mover.update(self.t)
+
+            self.broker.publish("position_updated", self.t)
+
+        # Ensure we are exactly at the target time
+        if np.abs(self.t - t_target) > 1e-9:
+            self.t = t_target
+            for platform in self.platforms.values():
+                if isinstance(platform.mover, AnalyticalMover):
+                    platform.mover.update(self.t)
+            self.broker.publish("position_updated", self.t)
 
     def run(self, t_end):
         """
         Run the simulation from the current time up to t_end.
         """
+        # Initialize all platform controllers before beginning
+        for platform in list(self.platforms.values()):
+            if platform.controller:
+                platform.controller.initialize(self)
+
         self.broker.publish("sim_start", self.t)
         
         while self.t < t_end:
