@@ -65,6 +65,82 @@ class EventScheduler:
         self._events.clear()
 
 
+class SimulationContext:
+    """
+    Owns all Newtonian mover state and provides context-aware access via get_state().
+
+    State is maintained in two arrays:
+        committed_y:    The last accepted RK45 state, updated after each solver.step().
+                        This is the state seen by events and observers.
+        _integration_y: The current ode_fun substep state. Set only during derivative
+                        evaluation and cleared immediately after via a try/finally block.
+
+    get_state() automatically routes to the appropriate array based on whether integration
+    is active, so all movers observe a consistent snapshot for the same substep.
+    """
+
+    def __init__(self):
+        self.t = 0.0
+        self.committed_y = np.empty(0, dtype=float)
+        self._integration_y = None
+        self._integrating = False
+        self._index_map = {}  # {NewtonianMover: start_index in committed_y}
+
+    def register(self, mover, initial_state):
+        """
+        Allocate a slot in the state vector for mover and seed it with initial_state.
+        Called by the engine when a platform containing a NewtonianMover is registered.
+
+        Parameters:
+            mover:         A NewtonianMover instance.
+            initial_state: Array-like of shape (6,): [x, y, z, vx, vy, vz].
+        """
+        start = len(self.committed_y)
+        self._index_map[mover] = start
+        self.committed_y = np.concatenate(
+            [self.committed_y, np.asarray(initial_state, dtype=float)]
+        )
+
+    def get_state(self, mover):
+        """
+        Return (pos, vel) for mover from the appropriate state array.
+
+        During ode_fun evaluation (_integrating is True), returns the current substep
+        state so that coupled movers see values consistent with the calling mover's
+        own pos/vel. At all other times, returns the last committed (post-step) state.
+        """
+        y = self._integration_y if self._integrating else self.committed_y
+        s = self._index_map[mover]
+        return y[s:s + 3].copy(), y[s + 3:s + 6].copy()
+
+    def _enter_integration(self, y):
+        """
+        Point the context at the current substep state vector y.
+        Called at the top of ode_fun before any compute_derivatives calls.
+        """
+        self._integration_y = y
+        self._integrating = True
+
+    def _exit_integration(self):
+        """
+        Clear the substep reference so get_state() reverts to committed_y.
+        Called in the finally block of ode_fun to guarantee cleanup even on error.
+        """
+        self._integrating = False
+        self._integration_y = None
+
+    def commit(self, y, t):
+        """
+        Record an accepted solver state. Called by the engine after each solver.step().
+
+        Parameters:
+            y: The accepted state vector from the solver.
+            t: The accepted simulation time.
+        """
+        self.committed_y = y.copy()
+        self.t = t
+
+
 '''
 ### Comments
 * Would like state to be consistent across all movers when they compute their derivatives,
@@ -105,10 +181,10 @@ class SimulationEngine:
         self.t = 0.0
         self.scheduler = EventScheduler()
         self.broker = EventBroker()
+        self.context = SimulationContext()
         self.platforms = {}
         self.max_step = 1.0  # Default maximum step size for continuous integration
         self.running = False
-        self._solver_reset_flag = False
 
     def schedule(self, time, callback, name=None, interval=None):
         """
@@ -119,19 +195,23 @@ class SimulationEngine:
     def register_platform(self, platform):
         """
         Register a platform in the simulation.
+
+        For NewtonianMover platforms, allocates a slot in the SimulationContext state
+        vector using the mover's current state as the initial value, then injects the
+        context into the mover so it can call get_state() on itself or any other
+        registered mover.
         """
         self.platforms[platform.id] = platform
+        if isinstance(platform.mover, NewtonianMover):
+            # Seed the context with this mover's initial state and give it a context
+            # reference. get_state() will be renamed get_initial_state() when mover.py
+            # is refactored; for now the existing method returns the same value.
+            self.context.register(platform.mover, platform.mover.get_state())
+            platform.mover._context = self.context
         # If simulation is already running, initialize its controller
         if self.running and platform.controller:
             platform.controller.initialize(self)
         self.broker.publish("platform_registered", platform)
-
-    def flag_solver_reset(self):
-        """
-        Flags that a non-smooth change has occurred (e.g. force change),
-        requiring the continuous solver to be reset at the next step.
-        """
-        self._solver_reset_flag = True
 
     def stop(self):
         """
@@ -145,71 +225,63 @@ class SimulationEngine:
         Integrates NewtonianMovers using scipy.integrate.RK45.
         Updates AnalyticalMovers directly to the target/stepped time.
         """
-        # 1. Identify active Newtonian movers
-        active_movers = []
-        y_list = []
-        idx = 0
-        for platform in self.platforms.values():
-            if isinstance(platform.mover, NewtonianMover):
-                active_movers.append((platform.mover, idx))
-                y_list.append(platform.mover.get_state())
-                idx += 6
+        # 1. Collect active Newtonian movers from the context index map
+        active_movers = list(self.context._index_map.items())
 
-        # If no Newtonian movers exist, just update time and analytical movers
-        if not active_movers:
+        # Skip RK45 if there are no Newtonian movers or the time step is too small.
+        # Both cases share the same resolution: advance time and update analytical movers.
+        if not active_movers or t_target - self.t < 1e-9:
             self.t = t_target
+            self.context.t = t_target
             for platform in self.platforms.values():
                 if isinstance(platform.mover, AnalyticalMover):
                     platform.mover.update(self.t)
             self.broker.publish("position_updated", self.t)
             return
 
-        # Safety: if time step is too small, just advance analytically to avoid RK45 errors
-        if t_target - self.t < 1e-9:
-            self.t = t_target
-            for platform in self.platforms.values():
-                if isinstance(platform.mover, AnalyticalMover):
-                    platform.mover.update(self.t)
-            self.broker.publish("position_updated", self.t)
-            return
+        # 2. Seed the solver from the context's committed state vector
+        y0 = self.context.committed_y.copy()
 
-        y0 = np.concatenate(y_list)
-
-        # 2. Define the combined derivative function
+        # 3. Define the combined derivative function.
+        #    _enter_integration points the context at the current substep y so that any
+        #    mover calling get_state() on a peer sees values consistent with its own
+        #    pos/vel. _exit_integration is called in a finally block to guarantee cleanup.
         def ode_fun(t, y):
-            dy = np.zeros_like(y)
-            for mover, start in active_movers:
-                pos = y[start : start + 3]
-                vel = y[start + 3 : start + 6]
-                dpos, dvel = mover.compute_derivatives(t, pos, vel)
-                dy[start : start + 3] = dpos
-                dy[start + 3 : start + 6] = dvel
-            return dy
+            self.context._enter_integration(y)
+            try:
+                dy = np.zeros_like(y)
+                for mover, start in active_movers:
+                    pos = y[start : start + 3]
+                    vel = y[start + 3 : start + 6]
+                    dpos, dvel = mover.compute_derivatives(t, pos, vel)
+                    dy[start : start + 3] = dpos
+                    dy[start + 3 : start + 6] = dvel
+                return dy
+            finally:
+                self.context._exit_integration()
 
         # Determine integration constraints
         max_step_limit = min(self.max_step, t_target - self.t) if self.max_step else (t_target - self.t)
-        
+
         # Initialize RK45 integration solver
         solver = RK45(ode_fun, self.t, y0, t_bound=t_target, max_step=max_step_limit)
 
-        # 3. Integrate state up to t_target
+        # 4. Integrate state up to t_target
         while self.running and solver.t < t_target and solver.status == "running":
             solver.step()
+            # Commit the accepted step to the context (replaces individual set_state calls)
+            self.context.commit(solver.y, solver.t)
             self.t = solver.t
-
-            # Write integrated state back to Newtonian movers
-            for mover, start in active_movers:
-                mover.set_state(solver.y[start : start + 6])
-            # Update analytical movers
+            # Update analytical movers to match the new time
             for platform in self.platforms.values():
                 if isinstance(platform.mover, AnalyticalMover):
                     platform.mover.update(self.t)
-
             self.broker.publish("position_updated", self.t)
 
         # Ensure we are exactly at the target time if we are still running
         if self.running and np.abs(self.t - t_target) > 1e-9:
             self.t = t_target
+            self.context.t = t_target
             for platform in self.platforms.values():
                 if isinstance(platform.mover, AnalyticalMover):
                     platform.mover.update(self.t)

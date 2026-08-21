@@ -186,6 +186,5 @@ class AircraftAutopilot(Controller):
         
         thrust_req = drag_force_mag + mover.mass * K_speed * (self.target_speed - speed)
         mover.thrust_cmd = np.clip(thrust_req, 0.0, mover.t_max)
-        
-        # Notify solver reset because autopilot updated continuous forces
-        engine.flag_solver_reset()
+        # Note: no solver reset needed — the engine recreates the RK45 solver at the
+        # start of each step_continuous call, so updated forces are always picked up.
