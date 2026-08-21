@@ -65,6 +65,37 @@ class EventScheduler:
         self._events.clear()
 
 
+'''
+### Comments
+* Would like state to be consistent across all movers when they compute their derivatives,
+  in case their derivatives depend on the state of others.
+    * Potential work around is to always model coupled movers as a single system, but this
+      may be less intuitive to users
+    * Need a mechanism for movers to query state of other platforms within ode_fun (temporary state),
+      and for events & observers to query state when they are activated (committed state).
+* Seems like there is or can be considerable overlap between mover and controller in current design.
+  This causes confusion and potentially indicates one is not necessary.
+    * If mover should not have any discontinuous logic, or change the 'mode' of the platform,
+      then we should enforce that somehow
+        * e.g. remove `update` and `set_state` methods
+* Should clarify purpose and responsiblity of each class for users' sake
+    * Engine gets computes and hosts state at each time requested by events
+    * Platform interfaces individual entities logic and phsyics with engine
+    * Mover either returns the state at a given time,
+      or returns the acceleration of the platform's state given the time and the whole simulation state
+        * Should not irreversibly alter the 'mode' of platform, b/c that could break RK45
+    * Controller may alter the 'mode' of the platform in irreversible ways (e.g. stage separation)
+    * Events drive simulation and denote time intervals of continuous evolution
+* Does `_solver_reset_flag` ever get used?
+* if-blocks in `step_continuous` appear to have identical bodies and therfore can be combined
+* Engine could add EndSimulation event to itself instead of having an explicit t_end
+* Will need 6 DOF state at some point
+    * An AircraftSpline mover should roll and tilt with the bends in its path
+* Future features (need not be added yet, but ideally not precluded)
+    * despawn platform (e.g. if crashes into ground or something)
+    * collision evaluator
+    * line of sight evaluator
+'''
 class SimulationEngine:
     """
     The core Simulation Engine that coordinates time advancement, continuous integration, 
@@ -169,7 +200,6 @@ class SimulationEngine:
             # Write integrated state back to Newtonian movers
             for mover, start in active_movers:
                 mover.set_state(solver.y[start : start + 6])
-
             # Update analytical movers
             for platform in self.platforms.values():
                 if isinstance(platform.mover, AnalyticalMover):
