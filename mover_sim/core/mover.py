@@ -2,8 +2,13 @@ import numpy as np
 
 class Mover:
     """
-    Abstract base class for all movers. A Mover manages the kinematic and 
-    dynamic state of a platform (position and velocity in global coordinates).
+    Abstract base class for all movers. A Mover defines the kinematic and dynamic
+    behaviour of a platform.
+
+    For AnalyticalMovers, _position and _velocity are the live state, updated each
+    step via update(t).  For NewtonianMovers they serve only as pre-registration
+    temporaries; after register_platform() is called the SimulationContext becomes
+    the sole owner of state and _position/_velocity are no longer used.
     """
     def __init__(self, initial_position, initial_velocity=None):
         """
@@ -12,25 +17,19 @@ class Mover:
             initial_velocity: ECEF velocity [Vx, Vy, Vz] in meters/second (array-like).
         """
         self.platform = None  # Linked when added to Platform
-        self._position = np.asarray(initial_position, dtype=float)
-        self._velocity = np.asarray(initial_velocity, dtype=float) if initial_velocity is not None else np.zeros(3)
+        self._context = None  # Injected by the engine at registration
+        self._initial_position = np.asarray(initial_position, dtype=float)
+        self._initial_velocity = np.asarray(initial_velocity, dtype=float) if initial_velocity is not None else np.zeros(3)
 
-    @property
-    def position(self):
-        """Get the current position [X, Y, Z] in ECEF meters."""
-        return self._position
-
-    @property
-    def velocity(self):
-        """Get the current velocity [Vx, Vy, Vz] in ECEF meters/second."""
-        return self._velocity
-
-    def update(self, t):
+    def get_initial_state(self):
         """
-        Update the state of the mover to simulation time t.
-        Only used for Analytical Movers.
+        Return the 6-element initial state vector [x, y, z, vx, vy, vz].
+
+        Called once by the engine at registration time to seed the SimulationContext.
+        After that, initial_position and initial_velocity are no longer the live state source.
         """
-        pass
+        return np.concatenate([self._initial_position, self._initial_velocity])
+    
 
 
 class AnalyticalMover(Mover):
@@ -38,14 +37,24 @@ class AnalyticalMover(Mover):
     Base class for movers whose motion is governed by explicit analytical functions of time.
     Bypasses the numerical ODE solver.
     """
-    def update(self, t):
-        pos, vel = self.get_state_at(t)
-        self._position = np.asarray(pos, dtype=float)
-        self._velocity = np.asarray(vel, dtype=float)
+    
+    @property
+    def t(self):
+        return self._context.get_time()
 
-    def get_state_at(self, t):
+    @property
+    def position(self):
+        """Get the current position [X, Y, Z] in ECEF meters."""
+        return self.get_state()[:3]
+
+    @property
+    def velocity(self):
+        """Get the current velocity [Vx, Vy, Vz] in ECEF meters/second."""
+        return self.get_state()[3:]
+
+    def get_state(self):
         """
-        Evaluate the position and velocity at time t.
+        Evaluate the position and velocity at current simulation time.
         Must be implemented by subclasses.
         
         Returns:
@@ -57,6 +66,10 @@ class AnalyticalMover(Mover):
 class NewtonianMover(Mover):
     """
     Base class for movers whose motion is integrated numerically using an ODE solver.
+
+    State is owned by the SimulationContext after registration. Subclasses implement
+    compute_derivatives() and may hold references to other movers to call get_state()
+    on them; the context ensures all movers see a consistent substep snapshot.
     """
     def __init__(self, initial_position, initial_velocity=None, enable_gravity=False, enable_coriolis=False):
         """
@@ -75,19 +88,37 @@ class NewtonianMover(Mover):
         Returns the number of state variables (typically 6: X, Y, Z, Vx, Vy, Vz).
         """
         return 6
+    
+    @property
+    def t(self):
+        return self._context.get_time()
+
+    @property
+    def position(self):
+        """Get the current position [X, Y, Z] in ECEF meters."""
+        return self.get_state()[:3]
+
+    @property
+    def velocity(self):
+        """Get the current velocity [Vx, Vy, Vz] in ECEF meters/second."""
+        return self.get_state()[3:]
 
     def get_state(self):
         """
-        Get the current state vector slice to pack into the global solver vector.
-        """
-        return np.concatenate([self._position, self._velocity])
+        Return (pos, vel) as a tuple of (3,) arrays.
 
-    def set_state(self, state_slice):
+        Routes through the SimulationContext so that:
+          - During ode_fun evaluation: returns the current RK45 substep values,
+            consistent with all other movers being evaluated in the same call.
+          - At all other times: returns the last committed (post-step) values,
+            which is what events and observers should see.
+
+        Falls back to the constructor-supplied initial_position/initial_velocity if called
+        before the mover has been registered with an engine.
         """
-        Set the current state from a slice of the global solver vector.
-        """
-        self._position = np.asarray(state_slice[0:3], dtype=float)
-        self._velocity = np.asarray(state_slice[3:6], dtype=float)
+        if self._context is not None:
+            return self._context.get_state(self)
+        return self.get_initial_state()
 
     def compute_derivatives(self, t, pos, vel):
         """
@@ -114,3 +145,4 @@ class NewtonianMover(Mover):
             dvel += coriolis_acceleration(vel)
             
         return dpos, dvel
+

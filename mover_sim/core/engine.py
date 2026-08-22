@@ -143,33 +143,17 @@ class SimulationContext:
 
 '''
 ### Comments
-* Would like state to be consistent across all movers when they compute their derivatives,
-  in case their derivatives depend on the state of others.
-    * Potential work around is to always model coupled movers as a single system, but this
-      may be less intuitive to users
-    * Need a mechanism for movers to query state of other platforms within ode_fun (temporary state),
-      and for events & observers to query state when they are activated (committed state).
-* Seems like there is or can be considerable overlap between mover and controller in current design.
-  This causes confusion and potentially indicates one is not necessary.
-    * If mover should not have any discontinuous logic, or change the 'mode' of the platform,
-      then we should enforce that somehow
-        * e.g. remove `update` and `set_state` methods
-* Should clarify purpose and responsiblity of each class for users' sake
-    * Engine gets computes and hosts state at each time requested by events
-    * Platform interfaces individual entities logic and phsyics with engine
-    * Mover either returns the state at a given time,
-      or returns the acceleration of the platform's state given the time and the whole simulation state
-        * Should not irreversibly alter the 'mode' of platform, b/c that could break RK45
-    * Controller may alter the 'mode' of the platform in irreversible ways (e.g. stage separation)
-    * Events drive simulation and denote time intervals of continuous evolution
-* Does `_solver_reset_flag` ever get used?
-* if-blocks in `step_continuous` appear to have identical bodies and therfore can be combined
 * Engine could add EndSimulation event to itself instead of having an explicit t_end
 * Will need 6 DOF state at some point
+    * Or maybe arbitrary DOF
     * An AircraftSpline mover should roll and tilt with the bends in its path
+* More examples
+    * Rocket w/ stage separation
+    * Air Launch cruise missile
 * Future features (need not be added yet, but ideally not precluded)
     * despawn platform (e.g. if crashes into ground or something)
     * collision evaluator
+        * including with the ground
     * line of sight evaluator
 '''
 class SimulationEngine:
@@ -206,12 +190,12 @@ class SimulationEngine:
             # Seed the context with this mover's initial state and give it a context
             # reference. get_state() will be renamed get_initial_state() when mover.py
             # is refactored; for now the existing method returns the same value.
-            self.context.register(platform.mover, platform.mover.get_state())
+            self.context.register(platform.mover, platform.mover.get_initial_state())
             platform.mover._context = self.context
         # If simulation is already running, initialize its controller
         if self.running and platform.controller:
             platform.controller.initialize(self)
-        self.broker.publish("platform_registered", platform)
+            self.broker.publish("platform_registered", platform)
 
     def stop(self):
         """
@@ -273,18 +257,12 @@ class SimulationEngine:
             self.context.commit(solver.y, solver.t)
             self.t = solver.t
             # Update analytical movers to match the new time
-            for platform in self.platforms.values():
-                if isinstance(platform.mover, AnalyticalMover):
-                    platform.mover.update(self.t)
             self.broker.publish("position_updated", self.t)
 
         # Ensure we are exactly at the target time if we are still running
         if self.running and np.abs(self.t - t_target) > 1e-9:
             self.t = t_target
             self.context.t = t_target
-            for platform in self.platforms.values():
-                if isinstance(platform.mover, AnalyticalMover):
-                    platform.mover.update(self.t)
             self.broker.publish("position_updated", self.t)
 
     def run(self, t_end):

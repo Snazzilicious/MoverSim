@@ -25,15 +25,15 @@ class SplineMover(AnalyticalMover):
         self.spline = CubicSpline(self.times, self.positions, bc_type='clamped')
         self.spline_deriv = self.spline.derivative()
 
-    def get_state_at(self, t):
-        if t <= self.times[0]:
+    def get_state(self):
+        if self.t <= self.times[0]:
             return self.positions[0].copy(), np.zeros(3)
-        elif t >= self.times[-1]:
+        elif self.t >= self.times[-1]:
             return self.positions[-1].copy(), np.zeros(3)
         else:
-            pos = self.spline(t)
-            vel = self.spline_deriv(t)
-            return pos, vel
+            pos = self.spline(self.t)
+            vel = self.spline_deriv(self.t)
+            return np.concatenate([ pos, vel ])
 
 
 class WaypointMover(AnalyticalMover):
@@ -55,14 +55,14 @@ class WaypointMover(AnalyticalMover):
             
         super().__init__(self.positions[0])
 
-    def get_state_at(self, t):
-        if len(self.times) == 1 or t <= self.times[0]:
+    def get_state(self):
+        if len(self.times) == 1 or self.t <= self.times[0]:
             return self.positions[0].copy(), np.zeros(3)
         elif t >= self.times[-1]:
             return self.positions[-1].copy(), np.zeros(3)
             
         # Binary search to find which waypoint interval we are in
-        idx = np.searchsorted(self.times, t) - 1
+        idx = np.searchsorted(self.times, self.t) - 1
         t0, t1 = self.times[idx], self.times[idx + 1]
         p0, p1 = self.positions[idx], self.positions[idx + 1]
         
@@ -71,7 +71,7 @@ class WaypointMover(AnalyticalMover):
             return p0.copy(), np.zeros(3)
             
         # Linear interpolation
-        tau = (t - t0) / dt
+        tau = (self.t - t0) / dt
         pos = p0 + tau * (p1 - p0)
         vel = (p1 - p0) / dt
-        return pos, vel
+        return np.concatenate([ pos, vel ])
