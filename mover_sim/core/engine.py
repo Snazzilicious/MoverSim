@@ -221,7 +221,7 @@ class SimulationEngine:
         """
         Advance continuous state to t_target.
         Integrates NewtonianMovers using scipy.integrate.RK45.
-        Updates AnalyticalMovers directly to the target/stepped time.
+        AnalyticalMovers derive state from the current context time on demand.
         """
         # 1. Collect active Newtonian movers from the context index map
         active_movers = list(self.context._index_map.items())

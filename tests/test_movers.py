@@ -6,6 +6,14 @@ from mover_sim.core.controller import Controller
 from mover_sim.core.engine import SimulationEngine
 from mover_sim.models.spline_mover import WaypointMover, SplineMover
 
+
+class TimeStub:
+    def __init__(self, t=0.0):
+        self.t = t
+
+    def get_time(self):
+        return self.t
+
 def test_waypoint_mover():
     times = [0.0, 10.0, 20.0]
     positions = [
@@ -14,30 +22,37 @@ def test_waypoint_mover():
         [100.0, 200.0, 0.0]
     ]
     mover = WaypointMover(times, positions)
+    context = TimeStub()
+    mover._context = context
     
     # Test before start
-    pos, vel = mover.get_state_at(-5.0)
-    assert np.allclose(pos, [0.0, 0.0, 0.0])
-    assert np.allclose(vel, [0.0, 0.0, 0.0])
+    context.t = -5.0
+    state = mover.get_state()
+    assert np.allclose(state[:3], [0.0, 0.0, 0.0])
+    assert np.allclose(state[3:], [0.0, 0.0, 0.0])
     
     # Test at exactly waypoint 1
-    pos, vel = mover.get_state_at(10.0)
-    assert np.allclose(pos, [100.0, 0.0, 0.0])
+    context.t = 10.0
+    state = mover.get_state()
+    assert np.allclose(state[:3], [100.0, 0.0, 0.0])
     
     # Test intermediate linear position and velocity
-    pos, vel = mover.get_state_at(5.0)
-    assert np.allclose(pos, [50.0, 0.0, 0.0])
-    assert np.allclose(vel, [10.0, 0.0, 0.0]) # 100 meters / 10 seconds
+    context.t = 5.0
+    state = mover.get_state()
+    assert np.allclose(state[:3], [50.0, 0.0, 0.0])
+    assert np.allclose(state[3:], [10.0, 0.0, 0.0]) # 100 meters / 10 seconds
     
     # Test second segment intermediate
-    pos, vel = mover.get_state_at(15.0)
-    assert np.allclose(pos, [100.0, 100.0, 0.0])
-    assert np.allclose(vel, [0.0, 20.0, 0.0]) # 200 meters / 10 seconds
+    context.t = 15.0
+    state = mover.get_state()
+    assert np.allclose(state[:3], [100.0, 100.0, 0.0])
+    assert np.allclose(state[3:], [0.0, 20.0, 0.0]) # 200 meters / 10 seconds
 
     # Test past end
-    pos, vel = mover.get_state_at(25.0)
-    assert np.allclose(pos, [100.0, 200.0, 0.0])
-    assert np.allclose(vel, [0.0, 0.0, 0.0])
+    context.t = 25.0
+    state = mover.get_state()
+    assert np.allclose(state[:3], [100.0, 200.0, 0.0])
+    assert np.allclose(state[3:], [0.0, 0.0, 0.0])
 
 def test_spline_mover():
     times = [0.0, 5.0, 10.0]
@@ -47,16 +62,20 @@ def test_spline_mover():
         [20.0, 100.0, 0.0]
     ]
     mover = SplineMover(times, positions)
+    context = TimeStub()
+    mover._context = context
     
     # Test boundary condition clamped (vel=0 at endpoints)
-    pos_start, vel_start = mover.get_state_at(0.0)
-    assert np.allclose(pos_start, [0.0, 0.0, 0.0])
-    assert np.allclose(vel_start, [0.0, 0.0, 0.0])
+    context.t = 0.0
+    state_start = mover.get_state()
+    assert np.allclose(state_start[:3], [0.0, 0.0, 0.0])
+    assert np.allclose(state_start[3:], [0.0, 0.0, 0.0])
 
-    pos_mid, vel_mid = mover.get_state_at(5.0)
-    assert np.allclose(pos_mid, [10.0, 50.0, 0.0])
+    context.t = 5.0
+    state_mid = mover.get_state()
+    assert np.allclose(state_mid[:3], [10.0, 50.0, 0.0])
     # Spline should have non-zero velocity in the middle
-    assert not np.allclose(vel_mid, [0.0, 0.0, 0.0])
+    assert not np.allclose(state_mid[3:], [0.0, 0.0, 0.0])
 
 def test_newtonian_mover_integration():
     engine = SimulationEngine()

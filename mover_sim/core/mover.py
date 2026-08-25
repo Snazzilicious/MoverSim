@@ -5,10 +5,9 @@ class Mover:
     Abstract base class for all movers. A Mover defines the kinematic and dynamic
     behaviour of a platform.
 
-    For AnalyticalMovers, _position and _velocity are the live state, updated each
-    step via update(t).  For NewtonianMovers they serve only as pre-registration
-    temporaries; after register_platform() is called the SimulationContext becomes
-    the sole owner of state and _position/_velocity are no longer used.
+    The constructor-provided initial position and velocity are used to seed state before
+    registration. After registration, Newtonian movers read live state from the shared
+    SimulationContext while analytical movers compute state directly from simulation time.
     """
     def __init__(self, initial_position, initial_velocity=None):
         """
