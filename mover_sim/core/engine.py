@@ -3,7 +3,7 @@ import itertools
 import numpy as np
 from scipy.integrate import RK45
 from mover_sim.core.broker import EventBroker
-from mover_sim.core.mover import NewtonianMover, AnalyticalMover
+from mover_sim.core.mover import NewtonianMover
 
 class Event:
     """
@@ -227,7 +227,7 @@ class SimulationEngine:
         active_movers = list(self.context._index_map.items())
 
         # Skip RK45 if there are no Newtonian movers or the time step is too small.
-        # Both cases share the same resolution: advance time and update analytical movers.
+        # In both cases analytical movers observe the new time through the shared context.
         if not active_movers or t_target - self.t < 1e-9:
             self.t = t_target
             self.context.t = t_target
@@ -267,7 +267,6 @@ class SimulationEngine:
             # Commit the accepted step to the context (replaces individual set_state calls)
             self.context.commit(solver.y, solver.t)
             self.t = solver.t
-            # Update analytical movers to match the new time
             self.broker.publish("position_updated", self.t)
 
         # Ensure we are exactly at the target time if we are still running

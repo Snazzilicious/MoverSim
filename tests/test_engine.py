@@ -2,7 +2,7 @@ import pytest
 import numpy as np
 from mover_sim.core.broker import EventBroker
 from mover_sim.core.engine import EventScheduler, SimulationEngine
-from mover_sim.core.mover import NewtonianMover
+from mover_sim.core.mover import AnalyticalMover, NewtonianMover
 from mover_sim.core.platform import Platform
 
 def test_event_broker():
@@ -124,3 +124,76 @@ def test_simulation_context_returns_state_vector_and_substep_time():
     assert mover.observed_time >= 0.0
     assert mover.observed_time <= engine.t
     assert np.allclose(mover.observed_state[:3], mover.observed_state[3:] * mover.observed_time)
+
+def test_analytical_mover_uses_substep_time_during_newtonian_integration():
+    engine = SimulationEngine()
+    engine.max_step = 0.1
+
+    class ClockedAnalyticalMover(AnalyticalMover):
+        def __init__(self):
+            super().__init__([0.0, 0.0, 0.0])
+
+        def get_state(self):
+            t = self.t
+            return np.array([t, -t, 2.0 * t, 1.0, -1.0, 2.0])
+
+    class ObserverMover(NewtonianMover):
+        def __init__(self, target):
+            super().__init__([0.0, 0.0, 0.0], [0.0, 0.0, 0.0])
+            self.target = target
+            self.observed_target_state = None
+            self.observed_time = None
+            self.derivative_time = None
+
+        def compute_derivatives(self, t, pos, vel):
+            self.observed_target_state = self.target.get_state()
+            self.observed_time = self.target.t
+            self.derivative_time = t
+            return vel, np.zeros(3)
+
+    analytical = ClockedAnalyticalMover()
+    observer = ObserverMover(analytical)
+
+    engine.register_platform(Platform("target", analytical))
+    engine.register_platform(Platform("observer", observer))
+
+    engine.run(0.3)
+
+    assert observer.observed_target_state is not None
+    assert observer.observed_time is not None
+    assert observer.derivative_time is not None
+    assert np.isclose(observer.observed_time, observer.derivative_time)
+    assert np.allclose(
+        observer.observed_target_state,
+        [observer.derivative_time, -observer.derivative_time, 2.0 * observer.derivative_time, 1.0, -1.0, 2.0],
+    )
+
+def test_analytical_only_run_publishes_states_at_context_time():
+    engine = SimulationEngine()
+
+    class ClockedAnalyticalMover(AnalyticalMover):
+        def __init__(self):
+            super().__init__([0.0, 0.0, 0.0])
+
+        def get_state(self):
+            t = self.t
+            return np.array([10.0 + t, 20.0 - t, 30.0 + 2.0 * t, 1.0, -1.0, 2.0])
+
+    mover = ClockedAnalyticalMover()
+    engine.register_platform(Platform("analytical", mover))
+
+    observations = []
+
+    def record_state(t):
+        observations.append((t, mover.get_state().copy()))
+
+    engine.broker.subscribe("position_updated", record_state)
+    engine.schedule(0.5, lambda eng: None, "Checkpoint")
+
+    engine.run(1.25)
+
+    assert [t for t, _ in observations] == [0.5, 1.25]
+    for t, state in observations:
+        assert np.allclose(state[:3], [10.0 + t, 20.0 - t, 30.0 + 2.0 * t])
+        assert np.allclose(state[3:], [1.0, -1.0, 2.0])
+    assert np.allclose(mover.get_state()[:3], [11.25, 18.75, 32.5])
