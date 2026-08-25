@@ -1,39 +1,66 @@
 # MoverSim
 
-A general-purpose simulator for moving platforms in a global coordinate frame.
+A script-driven Python simulator for moving platforms in a global coordinate frame.
 
----
+## What It Is
 
-## Usage Model
+MoverSim provides:
+- a simulation engine with discrete events and continuous RK45 integration
+- Newtonian movers for numerically integrated motion
+- analytical movers for state defined directly as a function of time
+- controllers for guidance and behavior
+- observers such as CSV telemetry logging
+- coordinate and physics helpers for ECEF, ENU, gravity, Coriolis, and drag
 
-MoverSim is **script-driven**. There is no configuration file format, GUI, or built-in
-scenario loader. Instead, users write Python scripts that directly construct and wire
-together simulation objects — platforms, movers, controllers, and observers — and then
-hand them to the engine to run.
+Users build scenarios directly in Python by constructing platforms, movers, controllers,
+and observers, then handing them to `SimulationEngine`.
 
-This means:
-- How movers are constructed and how they reference each other is entirely up to the user
-  and the needs of their specific simulation.
-- There is no framework convention for dependency injection, component registration
-  order, or coupling patterns beyond what the engine requires at registration time.
-- The engine provides the integration loop, event dispatch, and state management; the
-  user provides the physics and logic.
+## Install
 
-See the `examples/` directory for reference scripts.
+```bash
+pip install -r requirements.txt
+pip install -e .
+```
 
----
+## Minimal Example
 
-## Architecture Overview
+```python
+from mover_sim.core.engine import SimulationEngine
+from mover_sim.core.platform import Platform
+from mover_sim.core.mover import NewtonianMover
 
-| Component | Role |
-|---|---|
-| `SimulationEngine` | Owns the simulation loop, advances time, runs the ODE solver, dispatches events |
-| `SimulationContext` | Owns all Newtonian mover state (committed and in-substep); routes `get_state()` correctly |
-| `Platform` | Named entity; holds a `Mover` and an optional `Controller` |
-| `NewtonianMover` | Purely behavioral; provides `compute_derivatives`; reads state via shared context |
-| `AnalyticalMover` | Computes state as an explicit function of time; bypasses the ODE solver |
-| `Controller` | Runs on a fixed schedule; may alter platform mode discontinuously |
-| `EventBroker` | Publish-subscribe bus for telemetry, logging, and inter-component notification |
+engine = SimulationEngine()
+mover = NewtonianMover([0.0, 0.0, 0.0], [100.0, 0.0, 0.0])
+platform = Platform("vehicle", mover)
 
-For full design details see [`MoverDesign.md`](MoverDesign.md) and
-[`ConsistentStateRefactorPlan.md`](ConsistentStateRefactorPlan.md).
+engine.register_platform(platform)
+engine.run(10.0)
+
+print(platform.mover.position)
+print(platform.mover.velocity)
+```
+
+## Concepts
+
+- `Platform`: named entity containing a mover and optional controller
+- `NewtonianMover`: integrated by the engine with a 6-element state vector
+- `AnalyticalMover`: computes `[x, y, z, vx, vy, vz]` directly from simulation time
+- `Controller`: scheduled logic that reads state and updates mover inputs or engine behavior
+- `EventBroker`: pub-sub bus for lifecycle and telemetry events
+
+## Examples
+
+- `python examples/scenario_a.py`
+- `python examples/scenario_b.py`
+- `python examples/plot_trajectories.py`
+
+## Documentation
+
+- User guide: [`docs/user-guide.md`](docs/user-guide.md)
+- Architecture: [`docs/architecture.md`](docs/architecture.md)
+
+## Tests
+
+```bash
+pytest
+```
