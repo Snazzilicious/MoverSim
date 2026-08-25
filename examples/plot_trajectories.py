@@ -1,6 +1,10 @@
 import os
+import sys
+from pathlib import Path
 import pandas as pd
 import numpy as np
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 try:
     import matplotlib.pyplot as plt
@@ -141,7 +145,7 @@ def plot_scenario_b():
         if not missile_valid.empty:
             plt.plot(missile_valid["Missile_E"] / 1000.0, missile_valid["Missile_N"] / 1000.0, 'r-', linewidth=2, label="Guided Missile")
             # Mark launch point
-            plt.scatter(missile_valid["Missile_E"].iloc[0] / 1000.0, missile_valid["Missile_N"].iloc[0] / 1000.0, color='orange', marker='o', s=120, label="Launch Event (t=12s)", zorder=5)
+            plt.scatter(missile_valid["Missile_E"].iloc[0] / 1000.0, missile_valid["Missile_N"].iloc[0] / 1000.0, color='orange', marker='o', s=120, label="Launch Event (t=1s)", zorder=5)
             # Mark intercept point
             plt.scatter(missile_valid["Missile_E"].iloc[-1] / 1000.0, missile_valid["Missile_N"].iloc[-1] / 1000.0, color='red', marker='*', s=250, label="Intercept Event", zorder=6)
             

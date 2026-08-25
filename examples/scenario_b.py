@@ -1,5 +1,10 @@
 import os
+import sys
+from pathlib import Path
 import numpy as np
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
 from mover_sim.core.platform import Platform
 from mover_sim.core.mover import NewtonianMover
 from mover_sim.core.controller import Controller
@@ -7,8 +12,8 @@ from mover_sim.core.engine import SimulationEngine
 from mover_sim.core.observer import CSVLogger
 from mover_sim.models.aircraft_mover import AircraftMover, AircraftAutopilot
 from mover_sim.models.spline_mover import WaypointMover
-from mover_sim.math.physics import aerodynamic_drag_force, air_density
-from mover_sim.math.coordinates import lla_to_ecef, ecef_to_lla, enu_to_ecef
+from mover_sim.math.physics import aerodynamic_drag_force
+from mover_sim.math.coordinates import ecef_to_lla, enu_to_ecef
 
 # Define Missile classes for dynamic spawn
 class MissileMover(NewtonianMover):
@@ -70,8 +75,6 @@ class MissileGuidance(Controller):
         # Point thrust directly towards the target (pure pursuit)
         if dist > 1e-3:
             mover.thrust_dir = rel_pos / dist
-            # Re-align ODE solver due to changes in thrust vector direction
-            engine.flag_solver_reset()
         else:
             mover.thrust_dir = np.zeros(3)
 
@@ -134,10 +137,7 @@ def run_scenario_b():
         
         # Dynamically register the spawned missile to the engine
         eng.register_platform(missile)
-        
-        # Force ODE solver update for the new Newtonian mover
-        eng.flag_solver_reset()
-        
+         
     engine.schedule(1.0, launch_missile, "MissileLaunch")
     
     # Setup CSV logger

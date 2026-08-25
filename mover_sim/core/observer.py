@@ -5,6 +5,9 @@ class CSVLogger:
     """
     Observer that writes the trajectories of all platforms in the simulation 
     to a CSV file.
+
+    Note: the header is fixed at simulation start, so platforms registered later will
+    not appear in the CSV output yet.
     """
     def __init__(self, engine, filepath, log_interval=1.0):
         """
@@ -32,6 +35,8 @@ class CSVLogger:
         self.file = open(self.filepath, mode='w', newline='')
         self.writer = csv.writer(self.file)
         
+        # TODO: Support platforms registered after sim_start. The current CSV format
+        # fixes columns up front, so dynamically spawned platforms are omitted.
         # Build header row
         header = ["time"]
         for plat_id in sorted(self.engine.platforms.keys()):
