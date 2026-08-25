@@ -1,6 +1,9 @@
 import pytest
+import numpy as np
 from mover_sim.core.broker import EventBroker
 from mover_sim.core.engine import EventScheduler, SimulationEngine
+from mover_sim.core.mover import NewtonianMover
+from mover_sim.core.platform import Platform
 
 def test_event_broker():
     broker = EventBroker()
@@ -94,3 +97,30 @@ def test_simulation_engine_run():
         ("recurring", 3.0),
     ]
     assert execution_times == expected_execution
+
+def test_simulation_context_returns_state_vector_and_substep_time():
+    engine = SimulationEngine()
+
+    class TrackingMover(NewtonianMover):
+        def __init__(self, pos, vel):
+            super().__init__(pos, vel)
+            self.observed_state = None
+            self.observed_time = None
+
+        def compute_derivatives(self, t, pos, vel):
+            self.observed_state = self.get_state()
+            self.observed_time = self.t
+            return vel, np.zeros(3)
+
+    mover = TrackingMover([0.0, 0.0, 0.0], [1.0, 2.0, 3.0])
+    engine.register_platform(Platform("tracker", mover))
+
+    engine.run(0.1)
+
+    assert mover.observed_state is not None
+    assert mover.observed_state.shape == (6,)
+    assert np.allclose(mover.observed_state[3:], [1.0, 2.0, 3.0])
+    assert mover.observed_time is not None
+    assert mover.observed_time >= 0.0
+    assert mover.observed_time <= engine.t
+    assert np.allclose(mover.observed_state[:3], mover.observed_state[3:] * mover.observed_time)

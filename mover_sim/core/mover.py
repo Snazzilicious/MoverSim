@@ -29,6 +29,12 @@ class Mover:
         After that, initial_position and initial_velocity are no longer the live state source.
         """
         return np.concatenate([self._initial_position, self._initial_velocity])
+
+    @property
+    def t(self):
+        if self._context is not None:
+            return self._context.get_time()
+        return 0.0
     
 
 
@@ -38,10 +44,6 @@ class AnalyticalMover(Mover):
     Bypasses the numerical ODE solver.
     """
     
-    @property
-    def t(self):
-        return self._context.get_time()
-
     @property
     def position(self):
         """Get the current position [X, Y, Z] in ECEF meters."""
@@ -54,11 +56,10 @@ class AnalyticalMover(Mover):
 
     def get_state(self):
         """
-        Evaluate the position and velocity at current simulation time.
+        Evaluate and return the 6-element [x, y, z, vx, vy, vz] state at the current
+        simulation time.
+
         Must be implemented by subclasses.
-        
-        Returns:
-            position (array-like of shape (3,)), velocity (array-like of shape (3,))
         """
         raise NotImplementedError
 
@@ -90,10 +91,6 @@ class NewtonianMover(Mover):
         return 6
     
     @property
-    def t(self):
-        return self._context.get_time()
-
-    @property
     def position(self):
         """Get the current position [X, Y, Z] in ECEF meters."""
         return self.get_state()[:3]
@@ -105,7 +102,7 @@ class NewtonianMover(Mover):
 
     def get_state(self):
         """
-        Return (pos, vel) as a tuple of (3,) arrays.
+        Return the 6-element [x, y, z, vx, vy, vz] state vector.
 
         Routes through the SimulationContext so that:
           - During ode_fun evaluation: returns the current RK45 substep values,
@@ -145,4 +142,3 @@ class NewtonianMover(Mover):
             dvel += coriolis_acceleration(vel)
             
         return dpos, dvel
-

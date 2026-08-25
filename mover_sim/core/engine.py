@@ -83,6 +83,7 @@ class SimulationContext:
         self.t = 0.0
         self.committed_y = np.empty(0, dtype=float)
         self._integration_y = None
+        self._integration_t = None
         self._integrating = False
         self._index_map = {}  # {NewtonianMover: start_index in committed_y}
 
@@ -103,7 +104,7 @@ class SimulationContext:
 
     def get_state(self, mover):
         """
-        Return (pos, vel) for mover from the appropriate state array.
+        Return the 6-element [x, y, z, vx, vy, vz] state for mover.
 
         During ode_fun evaluation (_integrating is True), returns the current substep
         state so that coupled movers see values consistent with the calling mover's
@@ -111,14 +112,25 @@ class SimulationContext:
         """
         y = self._integration_y if self._integrating else self.committed_y
         s = self._index_map[mover]
-        return y[s:s + 3].copy(), y[s + 3:s + 6].copy()
+        return y[s:s + 6].copy()
 
-    def _enter_integration(self, y):
+    def get_time(self):
         """
-        Point the context at the current substep state vector y.
+        Return the current simulation time.
+
+        During ode_fun evaluation this is the current RK45 substep time so analytical
+        movers queried from a Newtonian mover observe a time-consistent snapshot.
+        Otherwise it is the last committed simulation time.
+        """
+        return self._integration_t if self._integrating else self.t
+
+    def _enter_integration(self, y, t):
+        """
+        Point the context at the current substep state vector y and time t.
         Called at the top of ode_fun before any compute_derivatives calls.
         """
         self._integration_y = y
+        self._integration_t = t
         self._integrating = True
 
     def _exit_integration(self):
@@ -128,6 +140,7 @@ class SimulationContext:
         """
         self._integrating = False
         self._integration_y = None
+        self._integration_t = None
 
     def commit(self, y, t):
         """
@@ -143,6 +156,7 @@ class SimulationContext:
 
 '''
 ### Comments
+* Should verify tests running correctly
 * Engine could add EndSimulation event to itself instead of having an explicit t_end
 * Will need 6 DOF state at some point
     * Or maybe arbitrary DOF
@@ -186,12 +200,12 @@ class SimulationEngine:
         registered mover.
         """
         self.platforms[platform.id] = platform
+        platform.mover._context = self.context
         if isinstance(platform.mover, NewtonianMover):
             # Seed the context with this mover's initial state and give it a context
             # reference. get_state() will be renamed get_initial_state() when mover.py
             # is refactored; for now the existing method returns the same value.
             self.context.register(platform.mover, platform.mover.get_initial_state())
-            platform.mover._context = self.context
         # If simulation is already running, initialize its controller
         if self.running and platform.controller:
             platform.controller.initialize(self)
@@ -217,9 +231,6 @@ class SimulationEngine:
         if not active_movers or t_target - self.t < 1e-9:
             self.t = t_target
             self.context.t = t_target
-            for platform in self.platforms.values():
-                if isinstance(platform.mover, AnalyticalMover):
-                    platform.mover.update(self.t)
             self.broker.publish("position_updated", self.t)
             return
 
@@ -231,7 +242,7 @@ class SimulationEngine:
         #    mover calling get_state() on a peer sees values consistent with its own
         #    pos/vel. _exit_integration is called in a finally block to guarantee cleanup.
         def ode_fun(t, y):
-            self.context._enter_integration(y)
+            self.context._enter_integration(y, t)
             try:
                 dy = np.zeros_like(y)
                 for mover, start in active_movers:
