@@ -6,7 +6,6 @@ from mover_sim.core.mover import (
     AnalyticalMover,
     Mover,
     NewtonianMover,
-    TranslationalAnalyticalMover,
     TranslationalNewtonianMover,
 )
 from mover_sim.core.platform import Platform
@@ -215,13 +214,10 @@ def test_analytical_mover_uses_substep_time_during_newtonian_integration():
     engine = SimulationEngine()
     engine.max_step = 0.1
 
-    class ClockedAnalyticalMover(TranslationalAnalyticalMover):
-        def __init__(self):
-            super().__init__()
-
+    class ClockedAnalyticalMover(AnalyticalMover):
         def get_state(self):
             t = self.t
-            return np.array([t, -t, 2.0 * t, 1.0, -1.0, 2.0])
+            return np.array([t, -t, 2.0 * t, 1.0, -1.0, 2.0, 7.0 + t, -3.0 * t])
 
     class ObserverMover(TranslationalNewtonianMover):
         def __init__(self, target):
@@ -246,24 +242,32 @@ def test_analytical_mover_uses_substep_time_during_newtonian_integration():
     engine.run(0.3)
 
     assert observer.observed_target_state is not None
+    assert observer.observed_target_state.shape == (8,)
     assert observer.observed_time is not None
     assert observer.derivative_time is not None
     assert np.isclose(observer.observed_time, observer.derivative_time)
+    assert analytical.get_state_dimension() == 8
     assert np.allclose(
         observer.observed_target_state,
-        [observer.derivative_time, -observer.derivative_time, 2.0 * observer.derivative_time, 1.0, -1.0, 2.0],
+        [
+            observer.derivative_time,
+            -observer.derivative_time,
+            2.0 * observer.derivative_time,
+            1.0,
+            -1.0,
+            2.0,
+            7.0 + observer.derivative_time,
+            -3.0 * observer.derivative_time,
+        ],
     )
 
 def test_analytical_only_run_publishes_states_at_context_time():
     engine = SimulationEngine()
 
-    class ClockedAnalyticalMover(TranslationalAnalyticalMover):
-        def __init__(self):
-            super().__init__()
-
+    class ClockedAnalyticalMover(AnalyticalMover):
         def get_state(self):
             t = self.t
-            return np.array([10.0 + t, 20.0 - t, 30.0 + 2.0 * t, 1.0, -1.0, 2.0])
+            return np.array([10.0 + t, 20.0 - t, 30.0 + 2.0 * t, 1.0, -1.0, 2.0, t**2, 8.0])
 
     mover = ClockedAnalyticalMover()
     engine.register_platform(Platform("analytical", mover))
@@ -279,7 +283,7 @@ def test_analytical_only_run_publishes_states_at_context_time():
     engine.run(1.25)
 
     assert [t for t, _ in observations] == [0.5, 1.25]
+    assert mover.get_state_dimension() == 8
     for t, state in observations:
-        assert np.allclose(state[:3], [10.0 + t, 20.0 - t, 30.0 + 2.0 * t])
-        assert np.allclose(state[3:], [1.0, -1.0, 2.0])
-    assert np.allclose(mover.get_state()[:3], [11.25, 18.75, 32.5])
+        assert np.allclose(state, [10.0 + t, 20.0 - t, 30.0 + 2.0 * t, 1.0, -1.0, 2.0, t**2, 8.0])
+    assert np.allclose(mover.get_state(), [11.25, 18.75, 32.5, 1.0, -1.0, 2.0, 1.5625, 8.0])
