@@ -184,6 +184,40 @@ def test_simulation_context_tracks_distinct_state_slices_per_mover():
     assert np.allclose(engine.context.committed_y[slice_b], mover_b.get_state())
 
 
+def test_simulation_context_exposes_peer_substep_state_for_mixed_dimensions():
+    engine = SimulationEngine()
+    engine.max_step = 0.05
+
+    leader = TranslationalNewtonianMover([0.0, 0.0, 0.0], [2.0, 0.0, 0.0])
+
+    class ObserverMover(NewtonianMover):
+        def __init__(self, target):
+            super().__init__([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, -1.0])
+            self.target = target
+            self.observed_peer_state = None
+            self.observed_time = None
+
+        def compute_state_derivative(self, t, state):
+            self.observed_peer_state = self.target.get_state()
+            self.observed_time = self.t
+            derivative = np.zeros_like(state)
+            derivative[6] = 1.0
+            derivative[7] = -1.0
+            return derivative
+
+    observer = ObserverMover(leader)
+
+    engine.register_platform(Platform("leader", leader))
+    engine.register_platform(Platform("observer", observer))
+    engine.run(0.2)
+
+    assert observer.observed_peer_state is not None
+    assert observer.observed_peer_state.shape == (6,)
+    assert observer.observed_time is not None
+    assert np.allclose(observer.observed_peer_state[:3], [2.0 * observer.observed_time, 0.0, 0.0], atol=1e-8)
+    assert np.allclose(observer.observed_peer_state[3:], [2.0, 0.0, 0.0])
+
+
 def test_engine_integrates_mixed_state_dimensions_with_generic_derivative_api():
     engine = SimulationEngine()
     engine.max_step = 0.1
@@ -209,6 +243,39 @@ def test_engine_integrates_mixed_state_dimensions_with_generic_derivative_api():
 
     assert np.allclose(reference_mover.get_state(), [5.0, 2.0, 0.0, 0.0, 1.0, 0.0])
     assert np.allclose(extended_mover.get_state(), [2.0, 4.0, 6.0, 1.0, 2.0, 3.0, 14.0, -7.0])
+
+
+def test_context_register_rejects_initial_state_size_mismatch():
+    engine = SimulationEngine()
+
+    class BadInitialStateMover(NewtonianMover):
+        def __init__(self):
+            super().__init__([1.0, 2.0, 3.0, 4.0])
+
+        def get_state_dimension(self):
+            return 5
+
+        def compute_state_derivative(self, t, state):
+            return np.zeros_like(state)
+
+    with pytest.raises(ValueError, match=r"initial_state must have shape \(5,\)"):
+        engine.register_platform(Platform("bad_init", BadInitialStateMover()))
+
+
+def test_engine_rejects_derivative_shape_mismatch():
+    engine = SimulationEngine()
+
+    class BadDerivativeMover(NewtonianMover):
+        def __init__(self):
+            super().__init__([0.0, 0.0, 0.0, 0.0])
+
+        def compute_state_derivative(self, t, state):
+            return np.zeros(3)
+
+    engine.register_platform(Platform("bad_derivative", BadDerivativeMover()))
+
+    with pytest.raises(ValueError, match=r"expected \(4,\)"):
+        engine.run(0.1)
 
 def test_analytical_mover_uses_substep_time_during_newtonian_integration():
     engine = SimulationEngine()
