@@ -22,6 +22,9 @@ Typical flow:
 The engine owns simulation time, event dispatch, and RK45 integration of Newtonian
 movers.
 
+The engine state model is arbitrary-dimensional: each Newtonian mover contributes its own
+state slice to the shared solver vector.
+
 Main entry points:
 - `register_platform(platform)`
 - `schedule(time, callback, name=None, interval=None)`
@@ -40,16 +43,26 @@ Each platform contains:
 
 ### Movers
 
-Movers expose state as a 6-element vector:
+All movers expose state through `get_state()` and `get_state_dimension()`.
+
+The core does not require a fixed state layout. A mover can expose any state length that
+fits its model.
+
+Translational movers conventionally use a 6-element state vector:
 
 ```text
 [x, y, z, vx, vy, vz]
 ```
 
-Convenience properties:
-- `mover.position`
-- `mover.velocity`
-- `mover.t`
+Convenience properties such as `mover.position` and `mover.velocity` are provided by the
+translational mover subclasses, not by the generic base classes.
+
+Common mover families:
+- `NewtonianMover`: generic continuous-state base for RK45-integrated movers
+- `AnalyticalMover`: generic time-driven base for analytical movers
+- `TranslationalNewtonianMover`: position/velocity compatibility mover
+- `TranslationalAnalyticalMover`: analytical position/velocity compatibility mover
+- `Mover.t`: current simulation time view, including RK45 substep time during integration
 
 #### `NewtonianMover`
 
@@ -58,27 +71,40 @@ Use `NewtonianMover` when motion should be integrated from derivatives.
 Subclasses implement:
 
 ```python
+def compute_state_derivative(self, t, state):
+    return dstate
+```
+
+`NewtonianMover` is a generic base. It does not inject gravity, Coriolis, or any other
+force model on its own.
+
+If your model is translational, use `TranslationalNewtonianMover` and implement:
+
+```python
 def compute_derivatives(self, t, pos, vel):
     return dpos, dvel
 ```
 
-The base class can optionally add gravity and Coriolis acceleration.
+Concrete subclasses add the forces they need explicitly.
 
 #### `AnalyticalMover`
 
-Use `AnalyticalMover` when position and velocity are known directly as a function of
-time.
+Use `AnalyticalMover` when state is known directly as a function of time.
 
 Subclasses implement:
 
 ```python
 def get_state(self):
-    return [x, y, z, vx, vy, vz]
+    return state
 ```
 
 Current built-in analytical movers:
 - `SplineMover`
 - `WaypointMover`
+- `AircraftSplineMover`
+
+Use `TranslationalAnalyticalMover` when the state should still be interpreted as position
+and velocity.
 
 ### Controllers
 
@@ -151,6 +177,13 @@ Physics helpers in `mover_sim.math.physics`:
 - `air_density`
 - `aerodynamic_drag_force`
 
+Orientation helpers in `mover_sim.math.orientation`:
+- `normalize_quaternion`
+- `quaternion_multiply`
+- `quaternion_from_basis`
+- `rotate_vector_by_quaternion`
+- `quaternion_derivative_from_body_rates`
+
 ## Worked Example
 
 ### Constant-Velocity Newtonian Platform
@@ -158,15 +191,28 @@ Physics helpers in `mover_sim.math.physics`:
 ```python
 from mover_sim.core.engine import SimulationEngine
 from mover_sim.core.platform import Platform
-from mover_sim.core.mover import NewtonianMover
+from mover_sim.core.mover import TranslationalNewtonianMover
 
 engine = SimulationEngine()
-vehicle = Platform("vehicle", NewtonianMover([0, 0, 0], [10, 20, 30]))
+vehicle = Platform("vehicle", TranslationalNewtonianMover([0, 0, 0], [10, 20, 30]))
 
 engine.register_platform(vehicle)
 engine.run(10.0)
 
 print(vehicle.mover.position)  # [100, 200, 300]
+```
+
+### Aircraft Models
+
+Built-in aircraft paths now include:
+- `AircraftMover`: translational point-mass aircraft model
+- `AircraftSplineMover`: analytical aircraft mover with a 13-element state
+- `Aircraft6DOFMover`: rigid-body aircraft mover with a 13-element state
+
+Rigid-body aircraft state layout:
+
+```text
+[x, y, z, vx, vy, vz, qw, qx, qy, qz, p, q, r]
 ```
 
 ### CSV Logging

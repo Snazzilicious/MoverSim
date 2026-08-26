@@ -42,7 +42,8 @@ It stores:
 - `_index_map`: mapping from `NewtonianMover` to its slice in the combined state vector
 
 It provides:
-- `get_state(mover)` -> 6-element state vector
+- `get_state(mover)` -> mover-owned state slice
+- `get_state_slice(mover)` -> slice in the combined solver vector
 - `get_time()` -> current substep time during integration, committed time otherwise
 
 This gives coupled movers a time-consistent view during RK45 derivative evaluation.
@@ -84,15 +85,21 @@ A `Platform` groups:
 
 #### Shared Contract
 
-All movers expose state as:
+All movers expose state through `get_state()` and `get_state_dimension()`.
+
+The core does not require a fixed state layout.
+
+Translational movers conventionally expose:
 
 ```text
 [x, y, z, vx, vy, vz]
 ```
 
-They also expose:
+Translational compatibility subclasses also expose:
 - `position`
 - `velocity`
+
+All movers expose:
 - `t`
 
 #### `NewtonianMover`
@@ -100,11 +107,21 @@ They also expose:
 `NewtonianMover` participates in the combined RK45 system and implements:
 
 ```python
-compute_derivatives(t, pos, vel)
+compute_state_derivative(t, state)
 ```
 
 After registration, live Newtonian state is owned by `SimulationContext`, not by the
 mover instance itself.
+
+`NewtonianMover` is force-model agnostic. Gravity, Coriolis, drag, thrust, and similar
+terms belong in concrete subclasses.
+
+For translational compatibility, `TranslationalNewtonianMover` adapts the generic state
+API back to:
+
+```python
+compute_derivatives(t, pos, vel)
+```
 
 #### `AnalyticalMover`
 
@@ -113,6 +130,23 @@ mover instance itself.
 
 Because `Mover.t` comes from `SimulationContext`, analytical movers also observe RK45
 substep time when queried during Newtonian derivative evaluation.
+
+For translational compatibility, `TranslationalAnalyticalMover` exposes the conventional
+position/velocity view.
+
+#### Built-in Model Families
+
+Current movers include:
+- `SplineMover` and `WaypointMover`: translational analytical movers
+- `AircraftSplineMover`: analytical aircraft mover with 13-element state
+- `AircraftMover`: translational point-mass aircraft mover
+- `Aircraft6DOFMover`: rigid-body aircraft mover with 13-element state
+
+Rigid-body aircraft state layout:
+
+```text
+[x, y, z, vx, vy, vz, qw, qx, qy, qz, p, q, r]
+```
 
 ### `Controller`
 
@@ -158,6 +192,9 @@ If Newtonian movers are present:
 - expose substep state and time through `SimulationContext` inside `ode_fun`
 - after each accepted solver step, commit the new state and publish `position_updated`
 
+Each Newtonian mover contributes its own state slice, so the combined RK45 vector can mix
+different state dimensions in one solve.
+
 If no Newtonian movers are present:
 - advance committed time directly
 - analytical movers observe the new time through `SimulationContext`
@@ -200,6 +237,7 @@ mover_sim/
 |   |   +-- platform.py
 |   +-- math/
 |   |   +-- coordinates.py
+|   |   +-- orientation.py
 |   |   +-- physics.py
 |   +-- models/
 |       +-- aircraft_mover.py
@@ -213,4 +251,4 @@ mover_sim/
 
 - `CSVLogger` does not expand columns for dynamically registered platforms.
 - `EventScheduler` does not support cancellation.
-- Mover state is currently fixed at 6 DOF translational state: position and velocity.
+- `CSVLogger` still logs only translational telemetry columns.
