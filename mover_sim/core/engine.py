@@ -85,7 +85,7 @@ class SimulationContext:
         self._integration_y = None
         self._integration_t = None
         self._integrating = False
-        self._index_map = {}  # {NewtonianMover: start_index in committed_y}
+        self._index_map = {}  # {NewtonianMover: state slice in committed_y}
 
     def register(self, mover, initial_state):
         """
@@ -96,11 +96,21 @@ class SimulationContext:
             mover:         A NewtonianMover instance.
             initial_state: Array-like containing the mover's initial state vector.
         """
+        initial_state = np.asarray(initial_state, dtype=float)
+        expected_size = mover.get_state_dimension()
+        if initial_state.shape != (expected_size,):
+            raise ValueError(
+                f"initial_state must have shape ({expected_size},), got {initial_state.shape}"
+            )
+
         start = len(self.committed_y)
-        self._index_map[mover] = start
-        self.committed_y = np.concatenate(
-            [self.committed_y, np.asarray(initial_state, dtype=float)]
-        )
+        state_slice = slice(start, start + expected_size)
+        self._index_map[mover] = state_slice
+        self.committed_y = np.concatenate([self.committed_y, initial_state])
+
+    def get_state_slice(self, mover):
+        """Return the slice occupied by mover in the shared state vector."""
+        return self._index_map[mover]
 
     def get_state(self, mover):
         """
@@ -111,9 +121,8 @@ class SimulationContext:
         own pos/vel. At all other times, returns the last committed (post-step) state.
         """
         y = self._integration_y if self._integrating else self.committed_y
-        s = self._index_map[mover]
-        n = mover.get_state_dimension()
-        return y[s:s + n].copy()
+        state_slice = self._index_map[mover]
+        return y[state_slice].copy()
 
     def get_time(self):
         """
@@ -128,7 +137,7 @@ class SimulationContext:
     def _enter_integration(self, y, t):
         """
         Point the context at the current substep state vector y and time t.
-        Called at the top of ode_fun before any compute_derivatives calls.
+        Called at the top of ode_fun before any derivative calls.
         """
         self._integration_y = y
         self._integration_t = t
@@ -240,17 +249,20 @@ class SimulationEngine:
         # 3. Define the combined derivative function.
         #    _enter_integration points the context at the current substep y so that any
         #    mover calling get_state() on a peer sees values consistent with its own
-        #    pos/vel. _exit_integration is called in a finally block to guarantee cleanup.
+        #    state slice. _exit_integration is called in a finally block to guarantee cleanup.
         def ode_fun(t, y):
             self.context._enter_integration(y, t)
             try:
                 dy = np.zeros_like(y)
-                for mover, start in active_movers:
-                    pos = y[start : start + 3]
-                    vel = y[start + 3 : start + 6]
-                    dpos, dvel = mover.compute_derivatives(t, pos, vel)
-                    dy[start : start + 3] = dpos
-                    dy[start + 3 : start + 6] = dvel
+                for mover, state_slice in active_movers:
+                    state = y[state_slice]
+                    derivative = np.asarray(mover.compute_state_derivative(t, state), dtype=float)
+                    if derivative.shape != state.shape:
+                        raise ValueError(
+                            f"{mover.__class__.__name__}.compute_state_derivative() returned shape "
+                            f"{derivative.shape}, expected {state.shape}"
+                        )
+                    dy[state_slice] = derivative
                 return dy
             finally:
                 self.context._exit_integration()

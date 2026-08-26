@@ -160,6 +160,68 @@ def test_newtonian_context_get_state_uses_mover_state_dimension():
 
     assert np.allclose(mover.get_state(), [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0])
 
+
+def test_simulation_context_tracks_distinct_state_slices_per_mover():
+    engine = SimulationEngine()
+
+    mover_a = NewtonianMover([1.0, 2.0, 3.0], [4.0, 5.0, 6.0])
+
+    class ExtendedStateMover(NewtonianMover):
+        def __init__(self):
+            super().__init__([10.0, 20.0, 30.0], [40.0, 50.0, 60.0])
+
+        def get_initial_state(self):
+            return np.array([10.0, 20.0, 30.0, 40.0, 50.0, 60.0, 70.0, 80.0])
+
+        def get_state_dimension(self):
+            return 8
+
+    mover_b = ExtendedStateMover()
+
+    engine.register_platform(Platform("a", mover_a))
+    engine.register_platform(Platform("b", mover_b))
+
+    slice_a = engine.context.get_state_slice(mover_a)
+    slice_b = engine.context.get_state_slice(mover_b)
+
+    assert slice_a == slice(0, 6)
+    assert slice_b == slice(6, 14)
+    assert np.allclose(engine.context.committed_y[slice_a], mover_a.get_state())
+    assert np.allclose(engine.context.committed_y[slice_b], mover_b.get_state())
+
+
+def test_engine_integrates_mixed_state_dimensions_with_generic_derivative_api():
+    engine = SimulationEngine()
+    engine.max_step = 0.1
+
+    class ExtendedStateMover(NewtonianMover):
+        def __init__(self):
+            super().__init__([0.0, 0.0, 0.0], [1.0, 2.0, 3.0])
+
+        def get_initial_state(self):
+            return np.array([0.0, 0.0, 0.0, 1.0, 2.0, 3.0, 10.0, -5.0])
+
+        def get_state_dimension(self):
+            return 8
+
+        def compute_state_derivative(self, t, state):
+            derivative = np.zeros_like(state)
+            derivative[:3] = state[3:6]
+            derivative[6] = 2.0
+            derivative[7] = -1.0
+            return derivative
+
+    reference_mover = NewtonianMover([5.0, 0.0, 0.0], [0.0, 1.0, 0.0])
+    extended_mover = ExtendedStateMover()
+
+    engine.register_platform(Platform("reference", reference_mover))
+    engine.register_platform(Platform("extended", extended_mover))
+
+    engine.run(2.0)
+
+    assert np.allclose(reference_mover.get_state(), [5.0, 2.0, 0.0, 0.0, 1.0, 0.0])
+    assert np.allclose(extended_mover.get_state(), [2.0, 4.0, 6.0, 1.0, 2.0, 3.0, 14.0, -7.0])
+
 def test_analytical_mover_uses_substep_time_during_newtonian_integration():
     engine = SimulationEngine()
     engine.max_step = 0.1
