@@ -159,22 +159,69 @@ Behavior:
 
 There is no solver-reset mechanism in the current engine design.
 
-### `CSVLogger`
+### Trajectory Loggers
 
-`CSVLogger` subscribes to:
+The logging system is layered:
+- `BaseTrajectoryLogger`: shared sampling, buffering, broker subscription, and normalized record extraction
+- `CSVLogger`: flat long-row export sink
+- `HDF5Logger`: structured HDF5 archive sink
+
+`BaseTrajectoryLogger` subscribes to:
 - `sim_start`
 - `position_updated`
 - `sim_end`
+- optional event topics such as:
+  - `platform_registered`
+  - `waypoint_reached`
+  - `intercept`
 
-It writes:
-- time
-- ECEF position
-- geodetic coordinates
-- ECEF velocity
+It builds normalized per-platform records containing:
+- `time`
+- `platform_id`
+- `state`
+- `state_dim`
+- optional derived fields:
+  - `position`
+  - `velocity`
+  - `lla`
+  - `orientation`
+  - `body_rates`
 
-Known limitation:
-- the CSV header is fixed at simulation start, so dynamically registered platforms are
-  omitted from the file
+#### `CSVLogger`
+
+`CSVLogger` writes one row per platform sample.
+
+The output is a stable long/table format rather than a simulation-wide wide row. It is
+intended as an analysis/export format.
+
+Typical columns include:
+- `time`
+- `platform_id`
+- `state_dim`
+- translational fields when available
+- orientation and body-rate fields when available
+- `state_json` for the full arbitrary-dimensional state
+
+Optional event logging is written to a separate CSV file.
+
+#### `HDF5Logger`
+
+`HDF5Logger` is the structured archive format.
+
+It stores:
+- `/trajectories/<platform_id>/time`
+- `/trajectories/<platform_id>/state`
+- optional derived datasets:
+  - `position`
+  - `velocity`
+  - `lla`
+  - `orientation`
+  - `body_rates`
+- `/events/*` datasets when event logging is enabled
+- `/metadata` attributes describing the file schema
+
+Per-platform trajectory groups are created lazily on first sample. Datasets are appendable,
+chunked, and optionally compressed.
 
 ## Execution Model
 
@@ -249,6 +296,6 @@ mover_sim/
 
 ## Current Limitations
 
-- `CSVLogger` does not expand columns for dynamically registered platforms.
 - `EventScheduler` does not support cancellation.
-- `CSVLogger` still logs only translational telemetry columns.
+- `CSVLogger` stores arbitrary full state in serialized `state_json` rather than expanding generic per-element columns.
+- `HDF5Logger` currently assumes `h5py` is installed at runtime.

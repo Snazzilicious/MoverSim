@@ -11,7 +11,7 @@ MoverSim provides:
 - generic arbitrary-dimensional state support in the simulation core
 - translational compatibility movers for position/velocity-based models
 - controllers for guidance and behavior
-- observers such as CSV telemetry logging
+- observers such as CSV and HDF5 trajectory logging
 - coordinate, physics, and orientation helpers for ECEF, ENU, gravity, Coriolis, drag, and quaternions
 
 Users build scenarios directly in Python by constructing platforms, movers, controllers,
@@ -62,6 +62,25 @@ Built-in aircraft movers:
 - `AircraftMover`: translational point-mass aircraft model
 - `AircraftSplineMover`: analytical aircraft path follower with derived quaternion attitude
 - `Aircraft6DOFMover`: rigid-body aircraft model with quaternion attitude and body rates
+
+Logging:
+- `CSVLogger`: flat long-row export format, one row per platform sample
+- `HDF5Logger`: structured archive format with per-platform datasets and optional event tables
+
+Recommended use:
+- use CSV for quick inspection, spreadsheets, and lightweight analysis pipelines
+- use HDF5 for full-fidelity archival of mixed-dimension trajectories and events
+
+## Logging Example
+
+```python
+from mover_sim.core.observer import CSVLogger, HDF5Logger
+
+CSVLogger(engine, "output/telemetry.csv", log_interval=0.5)
+HDF5Logger(engine, "output/telemetry.h5", sample_interval=0.5)
+
+engine.run(30.0)
+```
 
 ## Examples
 

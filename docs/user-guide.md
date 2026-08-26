@@ -10,7 +10,7 @@ Typical flow:
 2. Create one or more `Platform` objects.
 3. Attach a `Mover` to each platform.
 4. Optionally attach a `Controller`.
-5. Optionally attach observers such as `CSVLogger`.
+5. Optionally attach observers such as `CSVLogger` or `HDF5Logger`.
 6. Register platforms with the engine.
 7. Schedule any discrete events.
 8. Run the engine to a target time.
@@ -129,15 +129,44 @@ If `update_interval` is set, the controller runs recurrently.
 
 Observers subscribe to engine events through `EventBroker`.
 
-Built-in observer:
+Built-in trajectory loggers:
 - `CSVLogger`
+- `HDF5Logger`
 
-`CSVLogger` writes time, ECEF position, geodetic coordinates, and velocity for each
-platform.
+`CSVLogger` writes one row per platform sample in a flat long/table format.
 
-Current limitation:
-- CSV columns are fixed at simulation start, so platforms registered later are not added
-  to the output file.
+Typical CSV columns include:
+- `time`
+- `platform_id`
+- `state_dim`
+- translational fields when available:
+  - `x`, `y`, `z`
+  - `lat`, `lon`, `alt`
+  - `vx`, `vy`, `vz`
+- orientation fields when available:
+  - `qw`, `qx`, `qy`, `qz`
+- body-rate fields when available:
+  - `p`, `q`, `r`
+- `state_json` containing the full arbitrary-dimensional state
+
+`HDF5Logger` writes structured per-platform datasets and is the preferred high-fidelity
+archive format for mixed mover types and arbitrary-dimensional state.
+
+Typical HDF5 structure:
+- `/trajectories/<platform_id>/time`
+- `/trajectories/<platform_id>/state`
+- optional derived datasets such as:
+  - `position`
+  - `velocity`
+  - `lla`
+  - `orientation`
+  - `body_rates`
+- `/events/*` when event logging is enabled
+- `/metadata` attributes describing the file
+
+Recommended use:
+- use `CSVLogger` for simple tabular export and quick analysis
+- use `HDF5Logger` when you want full structured state history, mixed state dimensions, or event capture
 
 ## Events
 
@@ -218,10 +247,23 @@ Rigid-body aircraft state layout:
 ### CSV Logging
 
 ```python
-from mover_sim.core.observer import CSVLogger
+from mover_sim.core.observer import CSVLogger, HDF5Logger
 
 logger = CSVLogger(engine, "output/telemetry.csv", log_interval=0.5)
+h5_logger = HDF5Logger(engine, "output/telemetry.h5", sample_interval=0.5)
 engine.run(30.0)
+```
+
+`CSVLogger` accepts optional event logging:
+
+```python
+CSVLogger(
+    engine,
+    "output/telemetry.csv",
+    log_interval=0.5,
+    include_events=True,
+    events_filepath="output/telemetry.events.csv",
+)
 ```
 
 ### Example Scenarios
