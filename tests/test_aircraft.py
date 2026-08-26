@@ -1,4 +1,5 @@
 import os
+import csv
 import pytest
 import numpy as np
 from mover_sim.core.platform import Platform
@@ -97,21 +98,27 @@ def test_csv_logger(tmp_path):
     # Check that file exists and contains data
     assert os.path.exists(log_file)
     with open(log_file, "r") as f:
-        lines = f.readlines()
+        rows = list(csv.reader(f))
         
-    # Expect: Header + initial log (0.0) + log at 0.5 + log at 1.0 + log at 1.5
-    assert len(lines) >= 4
+    # Expect: Header + one row per sampled platform state
+    assert len(rows) >= 4
     
     # Verify header columns
-    header = lines[0].strip().split(",")
+    header = rows[0]
     assert header[0] == "time"
-    assert "test_plane_x" in header
-    assert "test_plane_lat" in header
-    assert "test_plane_vx" in header
+    assert "platform_id" in header
+    assert "state_dim" in header
+    assert "x" in header
+    assert "lat" in header
+    assert "vx" in header
+    assert "state_json" in header
     
-    # Verify first row time
-    first_row = lines[1].strip().split(",")
+    # Verify first sampled row
+    first_row = rows[1]
     assert np.isclose(float(first_row[0]), 0.0)
+    assert first_row[1] == "test_plane"
+    assert int(first_row[2]) == 6
+    assert first_row[-1].startswith("[")
 
 
 def test_aircraft_6dof_mover_initialization():

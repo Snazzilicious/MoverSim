@@ -1,4 +1,6 @@
 import csv
+import json
+from pathlib import Path
 
 import numpy as np
 
@@ -112,15 +114,34 @@ class BaseTrajectoryLogger:
         event_record = {
             "time": self.engine.t,
             "topic": topic,
-            "args": args,
-            "kwargs": kwargs,
+            "platform_id": getattr(args[0], "id", None) if args else None,
+            "payload": {
+                "args": [self._make_json_safe(arg) for arg in args],
+                "kwargs": {key: self._make_json_safe(value) for key, value in kwargs.items()},
+            },
         }
         self.buffer_event_record(event_record)
+        if len(self.pending_events) >= self.batch_size:
+            self._write_event_batch(self.pending_events)
+            self.pending_events = []
 
     def _open_once(self):
         if not self._opened:
             self._open()
             self._opened = True
+
+    def _make_json_safe(self, value):
+        if isinstance(value, (str, int, float, bool)) or value is None:
+            return value
+        if isinstance(value, np.ndarray):
+            return value.tolist()
+        if isinstance(value, (list, tuple)):
+            return [self._make_json_safe(item) for item in value]
+        if isinstance(value, dict):
+            return {str(key): self._make_json_safe(item) for key, item in value.items()}
+        if hasattr(value, "id"):
+            return getattr(value, "id")
+        return repr(value)
 
     def _slice_optional_state(self, state, mover, method_name, expected_size):
         if not hasattr(mover, method_name):
@@ -174,13 +195,31 @@ class BaseTrajectoryLogger:
             self._sample_platforms(t, due_platform_ids)
             self._mark_platforms_sampled(due_platform_ids, t)
 
+    def _sample_platforms(self, t, platform_ids):
+        for platform_id in platform_ids:
+            record = self._extract_platform_record(t, platform_id)
+            self.buffer_platform_record(platform_id, record)
+            if len(self.pending_records_by_platform[platform_id]) >= self.batch_size:
+                self._write_platform_batch(platform_id, self.pending_records_by_platform[platform_id])
+                self.pending_records_by_platform[platform_id] = []
+
+    def _flush(self):
+        for platform_id, records in self.pending_records_by_platform.items():
+            if records:
+                self._write_platform_batch(platform_id, records)
+        self.pending_records_by_platform.clear()
+
+        if self.pending_events:
+            self._write_event_batch(self.pending_events)
+            self.pending_events = []
+
     def _open(self):
         raise NotImplementedError
 
-    def _sample_platforms(self, t, platform_ids):
+    def _write_platform_batch(self, platform_id, records):
         raise NotImplementedError
 
-    def _flush(self):
+    def _write_event_batch(self, events):
         raise NotImplementedError
 
     def _close(self):
@@ -189,67 +228,94 @@ class BaseTrajectoryLogger:
 
 class CSVLogger(BaseTrajectoryLogger):
     """
-    Observer that writes the trajectories of all platforms in the simulation to a CSV file.
+    Observer that writes one CSV row per platform sample.
 
-    Note: the header is fixed at simulation start, so platforms registered later will not
-    appear in the CSV output yet.
+    The output is a long/table format that supports mixed mover dimensions and platforms
+    registered after simulation start.
     """
 
-    def __init__(self, engine, filepath, log_interval=1.0):
+    def __init__(
+        self,
+        engine,
+        filepath,
+        log_interval=1.0,
+        include_events=False,
+        events_filepath=None,
+        batch_size=100,
+    ):
         """
         Parameters:
             engine: The SimulationEngine instance.
             filepath: Path to the output CSV file.
             log_interval: Minimum time interval (seconds) between logs.
+            include_events: If True, write selected broker events to a separate CSV file.
+            events_filepath: Optional path for the event CSV file.
+            batch_size: Number of buffered records to accumulate before writing.
         """
         self.filepath = filepath
+        self.events_filepath = events_filepath or str(Path(filepath).with_suffix(".events.csv"))
         self.file = None
         self.writer = None
-        super().__init__(engine, sample_interval=log_interval)
+        self.events_file = None
+        self.events_writer = None
+        super().__init__(
+            engine,
+            sample_interval=log_interval,
+            include_events=include_events,
+            event_topics=["platform_registered", "waypoint_reached", "intercept"],
+            batch_size=batch_size,
+        )
 
     def _open(self):
         """Initialize the CSV file and write the header."""
         self.file = open(self.filepath, mode="w", newline="")
         self.writer = csv.writer(self.file)
 
-        # TODO: Support platforms registered after sim_start. The current CSV format fixes
-        # columns up front, so dynamically spawned platforms are omitted.
-        header = ["time"]
-        for plat_id in sorted(self.engine.platforms.keys()):
-            header.extend([
-                f"{plat_id}_x",
-                f"{plat_id}_y",
-                f"{plat_id}_z",
-                f"{plat_id}_lat",
-                f"{plat_id}_lon",
-                f"{plat_id}_alt",
-                f"{plat_id}_vx",
-                f"{plat_id}_vy",
-                f"{plat_id}_vz",
-            ])
-        self.writer.writerow(header)
+        self.writer.writerow([
+            "time",
+            "platform_id",
+            "state_dim",
+            "x",
+            "y",
+            "z",
+            "lat",
+            "lon",
+            "alt",
+            "vx",
+            "vy",
+            "vz",
+            "qw",
+            "qx",
+            "qy",
+            "qz",
+            "p",
+            "q",
+            "r",
+            "state_json",
+        ])
 
-    def _sample_platforms(self, t, platform_ids):
-        """Write the current coordinates and velocities of all platforms to the file."""
+        if self.include_events:
+            self.events_file = open(self.events_filepath, mode="w", newline="")
+            self.events_writer = csv.writer(self.events_file)
+            self.events_writer.writerow(["time", "topic", "platform_id", "payload_json"])
+
+    def _write_platform_batch(self, platform_id, records):
+        """Write buffered trajectory records in long-row CSV form."""
         if not self.writer:
             return
 
-        records_by_platform = {}
-        for plat_id in platform_ids:
-            record = self._extract_platform_record(t, plat_id)
-            records_by_platform[plat_id] = record
-            self.buffer_platform_record(plat_id, record)
-
-        row = [t]
-        for plat_id in sorted(self.engine.platforms.keys()):
-            record = records_by_platform.get(plat_id)
-            if record is None:
-                record = self._extract_platform_record(t, plat_id)
-
+        for record in records:
             pos = record["position"]
             vel = record["velocity"]
             lla = record["lla"]
-            row.extend([
+            orientation = record["orientation"]
+            body_rates = record["body_rates"]
+            state_json = json.dumps(record["state"].tolist()) if record["state"] is not None else ""
+
+            self.writer.writerow([
+                record["time"],
+                record["platform_id"],
+                record["state_dim"],
                 pos[0] if pos is not None else "",
                 pos[1] if pos is not None else "",
                 pos[2] if pos is not None else "",
@@ -259,19 +325,38 @@ class CSVLogger(BaseTrajectoryLogger):
                 vel[0] if vel is not None else "",
                 vel[1] if vel is not None else "",
                 vel[2] if vel is not None else "",
+                orientation[0] if orientation is not None else "",
+                orientation[1] if orientation is not None else "",
+                orientation[2] if orientation is not None else "",
+                orientation[3] if orientation is not None else "",
+                body_rates[0] if body_rates is not None else "",
+                body_rates[1] if body_rates is not None else "",
+                body_rates[2] if body_rates is not None else "",
+                state_json,
             ])
-        self.writer.writerow(row)
 
-    def _flush(self):
-        """Flush any buffered CSV output and clear in-memory buffers."""
-        if self.file:
-            self.file.flush()
-        self.pending_records_by_platform.clear()
-        self.pending_events.clear()
+    def _write_event_batch(self, events):
+        """Write buffered event records to the optional event CSV file."""
+        if not self.events_writer:
+            return
+
+        for event in events:
+            self.events_writer.writerow([
+                event["time"],
+                event["topic"],
+                event["platform_id"] if event["platform_id"] is not None else "",
+                json.dumps(event["payload"]),
+            ])
 
     def _close(self):
-        """Close the CSV file and clear writer state."""
+        """Close the CSV files and clear writer state."""
         if self.file:
+            self.file.flush()
             self.file.close()
             self.file = None
             self.writer = None
+        if self.events_file:
+            self.events_file.flush()
+            self.events_file.close()
+            self.events_file = None
+            self.events_writer = None
