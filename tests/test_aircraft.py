@@ -26,6 +26,19 @@ def test_aircraft_mover_initialization():
     assert mover.bank_angle_cmd == 0.0
     assert mover.lift_cmd == 0.0
 
+
+def test_aircraft_mover_remains_translational_point_mass_model():
+    pos = lla_to_ecef(0.0, 0.0, 3000.0)
+    vel = np.array([0.0, 150.0, 0.0])
+
+    mover = AircraftMover(pos, vel)
+    state = mover.get_state()
+
+    assert mover.get_state_dimension() == 6
+    assert state.shape == (6,)
+    assert np.allclose(mover.position, state[:3])
+    assert np.allclose(mover.velocity, state[3:])
+
 def test_aircraft_autopilot_guidance():
     engine = SimulationEngine()
     engine.max_step = 0.2

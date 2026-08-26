@@ -77,6 +77,38 @@ def test_spline_mover():
     # Spline should have non-zero velocity in the middle
     assert not np.allclose(state_mid[3:], [0.0, 0.0, 0.0])
 
+
+def test_translational_analytical_movers_preserve_public_api():
+    times = [0.0, 10.0, 20.0]
+    waypoint_positions = [
+        [0.0, 0.0, 0.0],
+        [100.0, 0.0, 0.0],
+        [100.0, 200.0, 0.0],
+    ]
+    spline_positions = [
+        [0.0, 0.0, 0.0],
+        [10.0, 50.0, 0.0],
+        [20.0, 100.0, 0.0],
+    ]
+
+    waypoint = WaypointMover(times, waypoint_positions)
+    spline = SplineMover([0.0, 5.0, 10.0], spline_positions)
+
+    context = TimeStub(5.0)
+    waypoint._context = context
+    spline._context = context
+
+    waypoint_state = waypoint.get_state()
+    spline_state = spline.get_state()
+
+    assert waypoint.get_state_dimension() == 6
+    assert np.allclose(waypoint.position, waypoint_state[:3])
+    assert np.allclose(waypoint.velocity, waypoint_state[3:])
+
+    assert spline.get_state_dimension() == 6
+    assert np.allclose(spline.position, spline_state[:3])
+    assert np.allclose(spline.velocity, spline_state[3:])
+
 def test_newtonian_mover_integration():
     engine = SimulationEngine()
     
@@ -92,6 +124,15 @@ def test_newtonian_mover_integration():
     assert np.allclose(mover.position, [100.0, 200.0, 300.0])
     assert np.allclose(mover.velocity, [10.0, 20.0, 30.0])
     assert np.isclose(engine.t, 10.0)
+
+
+def test_translational_newtonian_mover_preserves_public_api():
+    mover = TranslationalNewtonianMover([1.0, 2.0, 3.0], [4.0, 5.0, 6.0])
+
+    assert mover.get_state_dimension() == 6
+    assert np.allclose(mover.get_state(), [1.0, 2.0, 3.0, 4.0, 5.0, 6.0])
+    assert np.allclose(mover.position, [1.0, 2.0, 3.0])
+    assert np.allclose(mover.velocity, [4.0, 5.0, 6.0])
 
 def test_controller_execution():
     engine = SimulationEngine()
