@@ -10,7 +10,7 @@ from mover_sim.models.aircraft_mover import (
     AircraftMover,
     AircraftAutopilot,
 )
-from mover_sim.math.coordinates import lla_to_ecef, ecef_to_lla
+from mover_sim.math.coordinates import lla_to_ecef, ecef_to_enu, ecef_to_lla
 from mover_sim.math.orientation import rotate_vector_by_quaternion
 
 def test_aircraft_mover_initialization():
@@ -177,6 +177,65 @@ def test_aircraft_6dof_quaternion_remains_normalized():
     engine.run(5.0)
 
     assert np.isclose(np.linalg.norm(mover.orientation), 1.0, atol=1e-3)
+
+
+def test_aircraft_6dof_yaw_roll_commands_change_trajectory():
+    engine = SimulationEngine()
+    engine.max_step = 0.02
+
+    ref_lat, ref_lon, ref_alt = 0.0, 0.0, 2000.0
+    pos0 = lla_to_ecef(ref_lat, ref_lon, ref_alt)
+    vel0 = np.array([0.0, 180.0, 0.0])
+
+    baseline = Aircraft6DOFMover(
+        pos0,
+        vel0,
+        mass=2000.0,
+        area=0.0,
+        t_max=2.0e5,
+        angular_damping=[8.0e3, 8.0e3, 8.0e3],
+        use_coriolis=False,
+    )
+    maneuvering = Aircraft6DOFMover(
+        pos0,
+        vel0,
+        mass=2000.0,
+        area=0.0,
+        t_max=2.0e5,
+        angular_damping=[8.0e3, 8.0e3, 8.0e3],
+        use_coriolis=False,
+    )
+
+    baseline.thrust_cmd = 1.2e5
+    maneuvering.thrust_cmd = 1.2e5
+    maneuvering.roll_moment_cmd = 8.0e4
+    maneuvering.yaw_moment_cmd = 8.0e4
+
+    engine.register_platform(Platform("baseline", baseline))
+    engine.register_platform(Platform("maneuvering", maneuvering))
+    engine.run(4.0)
+
+    _, baseline_north, _ = ecef_to_enu(
+        baseline.position[0],
+        baseline.position[1],
+        baseline.position[2],
+        ref_lat,
+        ref_lon,
+        ref_alt,
+    )
+    _, maneuver_north, _ = ecef_to_enu(
+        maneuvering.position[0],
+        maneuvering.position[1],
+        maneuvering.position[2],
+        ref_lat,
+        ref_lon,
+        ref_alt,
+    )
+
+    separation = np.linalg.norm(maneuvering.position - baseline.position)
+
+    assert abs(maneuver_north - baseline_north) > 10.0
+    assert separation > 50.0
 
 
 def test_aircraft_6dof_autopilot_generates_moment_commands():
