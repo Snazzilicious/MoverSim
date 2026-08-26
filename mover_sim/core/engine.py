@@ -156,19 +156,19 @@ class SimulationContext:
 
 '''
 ### Comments
-* Should verify tests running correctly
-* Engine could add EndSimulation event to itself instead of having an explicit t_end
 * Will need 6 DOF state at some point
     * Or maybe arbitrary DOF
     * An AircraftSpline mover should roll and tilt with the bends in its path
 * More examples
     * Rocket w/ stage separation
     * Air Launch cruise missile
+* h5py observer    
 * Future features (need not be added yet, but ideally not precluded)
     * despawn platform (e.g. if crashes into ground or something)
     * collision evaluator
         * including with the ground
     * line of sight evaluator
+* Engine could add EndSimulation event to itself instead of having an explicit t_end
 '''
 class SimulationEngine:
     """
