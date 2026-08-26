@@ -2,7 +2,13 @@ import pytest
 import numpy as np
 from mover_sim.core.broker import EventBroker
 from mover_sim.core.engine import EventScheduler, SimulationEngine
-from mover_sim.core.mover import AnalyticalMover, Mover, NewtonianMover
+from mover_sim.core.mover import (
+    AnalyticalMover,
+    Mover,
+    NewtonianMover,
+    TranslationalAnalyticalMover,
+    TranslationalNewtonianMover,
+)
 from mover_sim.core.platform import Platform
 
 
@@ -116,7 +122,7 @@ def test_simulation_engine_run():
 def test_simulation_context_returns_state_vector_and_substep_time():
     engine = SimulationEngine()
 
-    class TrackingMover(NewtonianMover):
+    class TrackingMover(TranslationalNewtonianMover):
         def __init__(self, pos, vel):
             super().__init__(pos, vel)
             self.observed_state = None
@@ -146,14 +152,10 @@ def test_newtonian_context_get_state_uses_mover_state_dimension():
 
     class ExtendedStateMover(NewtonianMover):
         def __init__(self):
-            super().__init__([1.0, 2.0, 3.0], [4.0, 5.0, 6.0])
-            self._extra_initial_state = np.array([7.0, 8.0])
+            super().__init__([1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0])
 
-        def get_initial_state(self):
-            return np.concatenate([super().get_initial_state(), self._extra_initial_state])
-
-        def get_state_dimension(self):
-            return 8
+        def compute_state_derivative(self, t, state):
+            return np.zeros_like(state)
 
     mover = ExtendedStateMover()
     engine.register_platform(Platform("extended", mover))
@@ -164,17 +166,14 @@ def test_newtonian_context_get_state_uses_mover_state_dimension():
 def test_simulation_context_tracks_distinct_state_slices_per_mover():
     engine = SimulationEngine()
 
-    mover_a = NewtonianMover([1.0, 2.0, 3.0], [4.0, 5.0, 6.0])
+    mover_a = TranslationalNewtonianMover([1.0, 2.0, 3.0], [4.0, 5.0, 6.0])
 
     class ExtendedStateMover(NewtonianMover):
         def __init__(self):
-            super().__init__([10.0, 20.0, 30.0], [40.0, 50.0, 60.0])
+            super().__init__([10.0, 20.0, 30.0, 40.0, 50.0, 60.0, 70.0, 80.0])
 
-        def get_initial_state(self):
-            return np.array([10.0, 20.0, 30.0, 40.0, 50.0, 60.0, 70.0, 80.0])
-
-        def get_state_dimension(self):
-            return 8
+        def compute_state_derivative(self, t, state):
+            return np.zeros_like(state)
 
     mover_b = ExtendedStateMover()
 
@@ -196,13 +195,7 @@ def test_engine_integrates_mixed_state_dimensions_with_generic_derivative_api():
 
     class ExtendedStateMover(NewtonianMover):
         def __init__(self):
-            super().__init__([0.0, 0.0, 0.0], [1.0, 2.0, 3.0])
-
-        def get_initial_state(self):
-            return np.array([0.0, 0.0, 0.0, 1.0, 2.0, 3.0, 10.0, -5.0])
-
-        def get_state_dimension(self):
-            return 8
+            super().__init__([0.0, 0.0, 0.0, 1.0, 2.0, 3.0, 10.0, -5.0])
 
         def compute_state_derivative(self, t, state):
             derivative = np.zeros_like(state)
@@ -211,7 +204,7 @@ def test_engine_integrates_mixed_state_dimensions_with_generic_derivative_api():
             derivative[7] = -1.0
             return derivative
 
-    reference_mover = NewtonianMover([5.0, 0.0, 0.0], [0.0, 1.0, 0.0])
+    reference_mover = TranslationalNewtonianMover([5.0, 0.0, 0.0], [0.0, 1.0, 0.0])
     extended_mover = ExtendedStateMover()
 
     engine.register_platform(Platform("reference", reference_mover))
@@ -226,7 +219,7 @@ def test_analytical_mover_uses_substep_time_during_newtonian_integration():
     engine = SimulationEngine()
     engine.max_step = 0.1
 
-    class ClockedAnalyticalMover(AnalyticalMover):
+    class ClockedAnalyticalMover(TranslationalAnalyticalMover):
         def __init__(self):
             super().__init__([0.0, 0.0, 0.0])
 
@@ -234,7 +227,7 @@ def test_analytical_mover_uses_substep_time_during_newtonian_integration():
             t = self.t
             return np.array([t, -t, 2.0 * t, 1.0, -1.0, 2.0])
 
-    class ObserverMover(NewtonianMover):
+    class ObserverMover(TranslationalNewtonianMover):
         def __init__(self, target):
             super().__init__([0.0, 0.0, 0.0], [0.0, 0.0, 0.0])
             self.target = target
@@ -268,7 +261,7 @@ def test_analytical_mover_uses_substep_time_during_newtonian_integration():
 def test_analytical_only_run_publishes_states_at_context_time():
     engine = SimulationEngine()
 
-    class ClockedAnalyticalMover(AnalyticalMover):
+    class ClockedAnalyticalMover(TranslationalAnalyticalMover):
         def __init__(self):
             super().__init__([0.0, 0.0, 0.0])
 

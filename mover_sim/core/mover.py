@@ -51,29 +51,9 @@ class AnalyticalMover(Mover):
     Bypasses the numerical ODE solver.
     """
 
-    def __init__(self, initial_position, initial_velocity=None):
-        initial_position = np.asarray(initial_position, dtype=float)
-        initial_velocity = (
-            np.asarray(initial_velocity, dtype=float)
-            if initial_velocity is not None
-            else np.zeros(3)
-        )
-        super().__init__(np.concatenate([initial_position, initial_velocity]))
-    
-    @property
-    def position(self):
-        """Get the current position [X, Y, Z] in ECEF meters."""
-        return self.get_state()[:3]
-
-    @property
-    def velocity(self):
-        """Get the current velocity [Vx, Vy, Vz] in ECEF meters/second."""
-        return self.get_state()[3:]
-
     def get_state(self):
         """
-        Evaluate and return the 6-element [x, y, z, vx, vy, vz] state at the current
-        simulation time.
+        Evaluate and return the mover state at the current simulation time.
 
         Must be implemented by subclasses.
         """
@@ -85,36 +65,19 @@ class NewtonianMover(Mover):
     Base class for movers whose motion is integrated numerically using an ODE solver.
 
     State is owned by the SimulationContext after registration. Subclasses implement
-    compute_derivatives() and may hold references to other movers to call get_state()
+    compute_state_derivative() and may hold references to other movers to call get_state()
     on them; the context ensures all movers see a consistent substep snapshot.
     """
-    def __init__(self, initial_position, initial_velocity=None, enable_gravity=False, enable_coriolis=False):
+    def __init__(self, initial_state, enable_gravity=False, enable_coriolis=False):
         """
         Parameters:
-            initial_position: ECEF coordinates [X, Y, Z] in meters.
-            initial_velocity: ECEF velocity [Vx, Vy, Vz] in m/s.
+            initial_state: Initial mover state vector.
             enable_gravity: If True, applies standard gravitational forces in derivative calculations.
             enable_coriolis: If True, applies Coriolis forces in derivative calculations.
         """
-        initial_position = np.asarray(initial_position, dtype=float)
-        initial_velocity = (
-            np.asarray(initial_velocity, dtype=float)
-            if initial_velocity is not None
-            else np.zeros(3)
-        )
-        super().__init__(np.concatenate([initial_position, initial_velocity]))
+        super().__init__(initial_state)
         self.enable_gravity = enable_gravity
         self.enable_coriolis = enable_coriolis
-    
-    @property
-    def position(self):
-        """Get the current position [X, Y, Z] in ECEF meters."""
-        return self.get_state()[:3]
-
-    @property
-    def velocity(self):
-        """Get the current velocity [Vx, Vy, Vz] in ECEF meters/second."""
-        return self.get_state()[3:]
 
     def get_state(self):
         """
@@ -126,17 +89,71 @@ class NewtonianMover(Mover):
           - At all other times: returns the last committed (post-step) values,
             which is what events and observers should see.
 
-        Falls back to the constructor-supplied initial_position/initial_velocity if called
-        before the mover has been registered with an engine.
+        Falls back to the constructor-supplied initial state if called before the mover
+        has been registered with an engine.
         """
         if self._context is not None:
             return self._context.get_state(self)
         return self.get_initial_state()
 
     def compute_state_derivative(self, t, state):
+        """Return the state derivative at time t for the supplied state vector."""
+        raise NotImplementedError
+
+
+class TranslationalMover(Mover):
+    """Compatibility layer for movers that interpret state as position and velocity."""
+
+    @staticmethod
+    def build_translational_state(initial_position, initial_velocity=None):
+        initial_position = np.asarray(initial_position, dtype=float)
+        initial_velocity = (
+            np.asarray(initial_velocity, dtype=float)
+            if initial_velocity is not None
+            else np.zeros(3)
+        )
+        return np.concatenate([initial_position, initial_velocity])
+
+    def get_position_slice(self):
+        """Return the state slice corresponding to translational position."""
+        return slice(0, 3)
+
+    def get_velocity_slice(self):
+        """Return the state slice corresponding to translational velocity."""
+        return slice(3, 6)
+
+    @property
+    def position(self):
+        """Get the current position [X, Y, Z] in ECEF meters."""
+        return self.get_state()[self.get_position_slice()]
+
+    @property
+    def velocity(self):
+        """Get the current velocity [Vx, Vy, Vz] in ECEF meters/second."""
+        return self.get_state()[self.get_velocity_slice()]
+
+
+class TranslationalAnalyticalMover(TranslationalMover, AnalyticalMover):
+    """Analytical mover with the legacy translational state convention."""
+
+    def __init__(self, initial_position, initial_velocity=None):
+        super().__init__(self.build_translational_state(initial_position, initial_velocity))
+
+
+class TranslationalNewtonianMover(TranslationalMover, NewtonianMover):
+    """Newtonian mover with the legacy translational state convention."""
+
+    def __init__(self, initial_position, initial_velocity=None, enable_gravity=False, enable_coriolis=False):
+        super().__init__(
+            self.build_translational_state(initial_position, initial_velocity),
+            enable_gravity=enable_gravity,
+            enable_coriolis=enable_coriolis,
+        )
+
+    def compute_state_derivative(self, t, state):
         """Map the translational state vector to the legacy derivative pair API."""
-        pos = state[:3]
-        vel = state[3:6]
+        pos = state[self.get_position_slice()]
+        vel = state[self.get_velocity_slice()]
         dpos, dvel = self.compute_derivatives(t, pos, vel)
         return np.concatenate([dpos, dvel])
 

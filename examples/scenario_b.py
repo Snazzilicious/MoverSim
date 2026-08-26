@@ -6,7 +6,7 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from mover_sim.core.platform import Platform
-from mover_sim.core.mover import NewtonianMover
+from mover_sim.core.mover import TranslationalNewtonianMover
 from mover_sim.core.controller import Controller
 from mover_sim.core.engine import SimulationEngine
 from mover_sim.core.observer import CSVLogger
@@ -16,7 +16,7 @@ from mover_sim.math.physics import aerodynamic_drag_force
 from mover_sim.math.coordinates import ecef_to_lla, enu_to_ecef
 
 # Define Missile classes for dynamic spawn
-class MissileMover(NewtonianMover):
+class MissileMover(TranslationalNewtonianMover):
     """
     Newtonian mover for a rocket-propelled missile.
     """

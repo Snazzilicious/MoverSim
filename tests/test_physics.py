@@ -9,7 +9,7 @@ from mover_sim.math.physics import (
     OMEGA_E
 )
 from mover_sim.core.platform import Platform
-from mover_sim.core.mover import NewtonianMover
+from mover_sim.core.mover import TranslationalNewtonianMover
 from mover_sim.core.engine import SimulationEngine
 
 def test_gravity_magnitude_and_direction():
@@ -82,7 +82,7 @@ def test_newtonian_mover_with_gravity():
     # Drop an object from 10,000 meters altitude above the equator
     # Equator surface ECEF: [6378137.0, 0.0, 0.0]
     initial_pos = np.array([6378137.0 + 10000.0, 0.0, 0.0])
-    mover = NewtonianMover(initial_pos, np.zeros(3), enable_gravity=True, enable_coriolis=False)
+    mover = TranslationalNewtonianMover(initial_pos, np.zeros(3), enable_gravity=True, enable_coriolis=False)
     platform = Platform("falling_rock", mover)
     engine.register_platform(platform)
     

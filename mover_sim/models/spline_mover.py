@@ -1,8 +1,8 @@
 import numpy as np
 from scipy.interpolate import CubicSpline
-from mover_sim.core.mover import AnalyticalMover
+from mover_sim.core.mover import TranslationalAnalyticalMover
 
-class SplineMover(AnalyticalMover):
+class SplineMover(TranslationalAnalyticalMover):
     """
     An analytical mover that follows a smooth path defined by a Cubic Spline.
     """
@@ -37,7 +37,7 @@ class SplineMover(AnalyticalMover):
         return np.concatenate([pos, vel])
 
 
-class WaypointMover(AnalyticalMover):
+class WaypointMover(TranslationalAnalyticalMover):
     """
     An analytical mover that follows a set of waypoints using linear interpolation.
     """

@@ -1,10 +1,10 @@
 import numpy as np
-from mover_sim.core.mover import NewtonianMover
+from mover_sim.core.mover import TranslationalNewtonianMover
 from mover_sim.core.controller import Controller
 from mover_sim.math.physics import gravity, aerodynamic_drag_force, air_density, GM
 from mover_sim.math.coordinates import ecef_to_lla, ecef_to_enu, lla_to_ecef
 
-class AircraftMover(NewtonianMover):
+class AircraftMover(TranslationalNewtonianMover):
     """
     A Newtonian mover representing a simplified 6-DOF style aircraft.
     Uses thrust, lift, drag, and gravity to compute forces.

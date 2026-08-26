@@ -1,7 +1,7 @@
 import pytest
 import numpy as np
 from mover_sim.core.platform import Platform
-from mover_sim.core.mover import NewtonianMover
+from mover_sim.core.mover import TranslationalNewtonianMover
 from mover_sim.core.controller import Controller
 from mover_sim.core.engine import SimulationEngine
 from mover_sim.models.spline_mover import WaypointMover, SplineMover
@@ -81,7 +81,7 @@ def test_newtonian_mover_integration():
     engine = SimulationEngine()
     
     # Newtonian mover with pos=[0,0,0], vel=[10, 20, 30] (constant velocity)
-    mover = NewtonianMover([0.0, 0.0, 0.0], [10.0, 20.0, 30.0])
+    mover = TranslationalNewtonianMover([0.0, 0.0, 0.0], [10.0, 20.0, 30.0])
     platform = Platform("test_vehicle", mover)
     engine.register_platform(platform)
     
@@ -97,7 +97,7 @@ def test_controller_execution():
     engine = SimulationEngine()
     
     # Mock Newtonian mover where velocity can be modified by controller
-    class ControllableMover(NewtonianMover):
+    class ControllableMover(TranslationalNewtonianMover):
         def __init__(self, pos, vel):
             super().__init__(pos, vel)
             self.acceleration = np.zeros(3)
