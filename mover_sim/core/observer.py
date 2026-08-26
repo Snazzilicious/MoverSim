@@ -1,6 +1,7 @@
 import csv
 import json
 from pathlib import Path
+from datetime import datetime, timezone
 
 import numpy as np
 
@@ -360,3 +361,176 @@ class CSVLogger(BaseTrajectoryLogger):
             self.events_file.close()
             self.events_file = None
             self.events_writer = None
+
+
+class HDF5Logger(BaseTrajectoryLogger):
+    """Structured trajectory logger that stores per-platform datasets in an HDF5 file."""
+
+    def __init__(
+        self,
+        engine,
+        filepath,
+        sample_interval=1.0,
+        include_events=True,
+        batch_size=100,
+        compression="gzip",
+        compression_level=4,
+        include_state=True,
+        include_lla=True,
+    ):
+        """
+        Parameters:
+            engine: The SimulationEngine instance.
+            filepath: Path to the output HDF5 file.
+            sample_interval: Minimum time interval (seconds) between logs.
+            include_events: If True, write selected broker events to the HDF5 file.
+            batch_size: Number of buffered records to accumulate before writing.
+            compression: Dataset compression algorithm or None.
+            compression_level: Compression level passed to HDF5 when compression is enabled.
+            include_state: If True, store the full mover state dataset.
+            include_lla: If True, store derived geodetic coordinates when position is available.
+        """
+        try:
+            import h5py  # type: ignore
+        except ImportError as exc:
+            raise ImportError("HDF5Logger requires h5py to be installed") from exc
+
+        self.h5py = h5py
+        self.filepath = filepath
+        self.compression = compression
+        self.compression_level = compression_level
+        self.file = None
+        self.trajectories_group = None
+        self.events_group = None
+        self.metadata_group = None
+        super().__init__(
+            engine,
+            sample_interval=sample_interval,
+            include_state=include_state,
+            include_lla=include_lla,
+            include_events=include_events,
+            event_topics=["platform_registered", "waypoint_reached", "intercept"],
+            batch_size=batch_size,
+        )
+
+    def _dataset_kwargs(self):
+        kwargs = {"chunks": True}
+        if self.compression is not None:
+            kwargs["compression"] = self.compression
+            kwargs["compression_opts"] = self.compression_level
+        return kwargs
+
+    def _open(self):
+        self.file = self.h5py.File(self.filepath, mode="w")
+        self.trajectories_group = self.file.create_group("trajectories")
+        self.metadata_group = self.file.create_group("metadata")
+        self.metadata_group.attrs["sample_interval"] = self.sample_interval
+        self.metadata_group.attrs["created_utc"] = datetime.now(timezone.utc).isoformat()
+        self.metadata_group.attrs["mover_sim_version"] = "unknown"
+        self.metadata_group.attrs["schema_version"] = "1"
+
+        if self.include_events:
+            self.events_group = self.file.create_group("events")
+            string_dtype = self.h5py.string_dtype(encoding="utf-8")
+            kwargs = self._dataset_kwargs()
+            self.events_group.create_dataset("time", shape=(0,), maxshape=(None,), dtype=np.float64, **kwargs)
+            self.events_group.create_dataset("topic", shape=(0,), maxshape=(None,), dtype=string_dtype, **kwargs)
+            self.events_group.create_dataset("platform_id", shape=(0,), maxshape=(None,), dtype=string_dtype, **kwargs)
+            self.events_group.create_dataset("payload_json", shape=(0,), maxshape=(None,), dtype=string_dtype, **kwargs)
+
+    def _ensure_platform_group(self, platform_id, records):
+        if platform_id in self.trajectories_group:
+            return self.trajectories_group[platform_id]
+
+        group = self.trajectories_group.create_group(platform_id)
+        first_record = records[0]
+        state_dim = first_record["state_dim"]
+        group.attrs["state_dim"] = state_dim
+        group.attrs["schema_version"] = "1"
+        group.attrs["field_descriptions"] = (
+            "time, state, optional position, optional velocity, optional lla, "
+            "optional orientation, optional body_rates"
+        )
+
+        kwargs = self._dataset_kwargs()
+        group.create_dataset("time", shape=(0,), maxshape=(None,), dtype=np.float64, **kwargs)
+        if self.include_state and first_record["state"] is not None:
+            group.create_dataset("state", shape=(0, state_dim), maxshape=(None, state_dim), dtype=np.float64, **kwargs)
+        if first_record["position"] is not None:
+            group.create_dataset("position", shape=(0, 3), maxshape=(None, 3), dtype=np.float64, **kwargs)
+        if first_record["velocity"] is not None:
+            group.create_dataset("velocity", shape=(0, 3), maxshape=(None, 3), dtype=np.float64, **kwargs)
+        if first_record["lla"] is not None:
+            group.create_dataset("lla", shape=(0, 3), maxshape=(None, 3), dtype=np.float64, **kwargs)
+        if first_record["orientation"] is not None:
+            group.create_dataset("orientation", shape=(0, 4), maxshape=(None, 4), dtype=np.float64, **kwargs)
+        if first_record["body_rates"] is not None:
+            group.create_dataset("body_rates", shape=(0, 3), maxshape=(None, 3), dtype=np.float64, **kwargs)
+        return group
+
+    def _append_dataset(self, dataset, values):
+        if values.ndim == 1:
+            old_size = dataset.shape[0]
+            new_size = old_size + values.shape[0]
+            dataset.resize((new_size,))
+            dataset[old_size:new_size] = values
+            return
+
+        old_size = dataset.shape[0]
+        new_size = old_size + values.shape[0]
+        dataset.resize((new_size, values.shape[1]))
+        dataset[old_size:new_size, :] = values
+
+    def _write_platform_batch(self, platform_id, records):
+        if not records:
+            return
+
+        group = self._ensure_platform_group(platform_id, records)
+
+        times = np.array([record["time"] for record in records], dtype=float)
+        self._append_dataset(group["time"], times)
+
+        if "state" in group:
+            states = np.vstack([record["state"] for record in records])
+            self._append_dataset(group["state"], states)
+        if "position" in group:
+            positions = np.vstack([record["position"] for record in records])
+            self._append_dataset(group["position"], positions)
+        if "velocity" in group:
+            velocities = np.vstack([record["velocity"] for record in records])
+            self._append_dataset(group["velocity"], velocities)
+        if "lla" in group:
+            llas = np.vstack([record["lla"] for record in records])
+            self._append_dataset(group["lla"], llas)
+        if "orientation" in group:
+            orientations = np.vstack([record["orientation"] for record in records])
+            self._append_dataset(group["orientation"], orientations)
+        if "body_rates" in group:
+            body_rates = np.vstack([record["body_rates"] for record in records])
+            self._append_dataset(group["body_rates"], body_rates)
+
+    def _write_event_batch(self, events):
+        if not self.events_group or not events:
+            return
+
+        times = np.array([event["time"] for event in events], dtype=float)
+        topics = np.array([event["topic"] for event in events], dtype=object)
+        platform_ids = np.array([
+            event["platform_id"] if event["platform_id"] is not None else ""
+            for event in events
+        ], dtype=object)
+        payloads = np.array([json.dumps(event["payload"]) for event in events], dtype=object)
+
+        self._append_dataset(self.events_group["time"], times)
+        self._append_dataset(self.events_group["topic"], topics)
+        self._append_dataset(self.events_group["platform_id"], platform_ids)
+        self._append_dataset(self.events_group["payload_json"], payloads)
+
+    def _close(self):
+        if self.file:
+            self.file.flush()
+            self.file.close()
+            self.file = None
+            self.trajectories_group = None
+            self.events_group = None
+            self.metadata_group = None
