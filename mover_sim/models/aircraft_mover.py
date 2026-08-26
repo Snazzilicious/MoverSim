@@ -1,8 +1,15 @@
 import numpy as np
-from mover_sim.core.mover import TranslationalNewtonianMover
+from mover_sim.core.mover import NewtonianMover, TranslationalMover, TranslationalNewtonianMover
 from mover_sim.core.controller import Controller
 from mover_sim.math.physics import aerodynamic_drag_force, air_density, coriolis_acceleration, gravity, GM
 from mover_sim.math.coordinates import ecef_to_lla, ecef_to_enu, lla_to_ecef
+from mover_sim.math.orientation import (
+    build_aircraft_body_axes,
+    normalize_quaternion,
+    quaternion_derivative_from_body_rates,
+    quaternion_from_basis,
+    rotate_vector_by_quaternion,
+)
 
 class AircraftMover(TranslationalNewtonianMover):
     """
@@ -81,6 +88,163 @@ class AircraftMover(TranslationalNewtonianMover):
         dvel = dvel + accel_aero_thrust
         
         return dpos, dvel
+
+
+class Aircraft6DOFMover(TranslationalMover, NewtonianMover):
+    """Rigid-body aircraft mover with translational, attitude, and body-rate state."""
+
+    def __init__(
+        self,
+        initial_position,
+        initial_velocity,
+        initial_orientation=None,
+        initial_body_rates=None,
+        mass=10000.0,
+        inertia=None,
+        area=30.0,
+        cd0=0.02,
+        t_max=80000.0,
+        angular_damping=None,
+        use_coriolis=True,
+        quaternion_normalization_gain=2.0,
+    ):
+        """
+        Parameters:
+            initial_position: ECEF coordinates [X, Y, Z] in meters.
+            initial_velocity: ECEF velocity [Vx, Vy, Vz] in m/s.
+            initial_orientation: Optional scalar-first quaternion [w, x, y, z]. If omitted,
+                an orientation is derived from the initial velocity and local vertical.
+            initial_body_rates: Optional body angular rates [p, q, r] in rad/s.
+            mass: Vehicle mass in kg.
+            inertia: Body inertia as a `(3, 3)` tensor or `(3,)` principal moments.
+            area: Reference area in m^2 used for drag.
+            cd0: Zero-lift drag coefficient.
+            t_max: Maximum thrust command in Newtons.
+            angular_damping: Per-axis angular damping coefficients.
+            use_coriolis: If True, include Coriolis acceleration in world-frame translation.
+            quaternion_normalization_gain: Stabilization gain used to keep the integrated
+                quaternion near unit length.
+
+        State layout:
+            [x, y, z, vx, vy, vz, qw, qx, qy, qz, p, q, r]
+        """
+        initial_position = np.asarray(initial_position, dtype=float)
+        initial_velocity = np.asarray(initial_velocity, dtype=float)
+        initial_body_rates = (
+            np.asarray(initial_body_rates, dtype=float)
+            if initial_body_rates is not None
+            else np.zeros(3)
+        )
+
+        if initial_orientation is None:
+            initial_orientation = self._derive_orientation_from_velocity(initial_position, initial_velocity)
+        else:
+            initial_orientation = normalize_quaternion(initial_orientation)
+
+        state = np.concatenate([
+            initial_position,
+            initial_velocity,
+            initial_orientation,
+            initial_body_rates,
+        ])
+        super().__init__(state)
+
+        self.mass = float(mass)
+        self.inertia = self._coerce_inertia(inertia)
+        self.inv_inertia = np.linalg.inv(self.inertia)
+        self.area = float(area)
+        self.cd0 = float(cd0)
+        self.t_max = float(t_max)
+        self.angular_damping = self._coerce_angular_damping(angular_damping)
+        self.use_coriolis = use_coriolis
+        self.quaternion_normalization_gain = float(quaternion_normalization_gain)
+
+        self.thrust_cmd = 0.0
+        self.roll_moment_cmd = 0.0
+        self.pitch_moment_cmd = 0.0
+        self.yaw_moment_cmd = 0.0
+
+    def get_orientation_slice(self):
+        return slice(6, 10)
+
+    def get_body_rate_slice(self):
+        return slice(10, 13)
+
+    @property
+    def orientation(self):
+        return self.get_state()[self.get_orientation_slice()]
+
+    @property
+    def body_rates(self):
+        return self.get_state()[self.get_body_rate_slice()]
+
+    def compute_state_derivative(self, t, state):
+        pos = state[self.get_position_slice()]
+        vel = state[self.get_velocity_slice()]
+        quat_state = state[self.get_orientation_slice()]
+        quat = normalize_quaternion(quat_state)
+        body_rates = state[self.get_body_rate_slice()]
+
+        dpos = vel
+        dvel = self._compute_world_acceleration(pos, vel, quat)
+        quat_dot = quaternion_derivative_from_body_rates(quat, body_rates)
+        quat_dot += self.quaternion_normalization_gain * (1.0 - np.dot(quat_state, quat_state)) * quat_state
+        body_rates_dot = self._compute_body_rate_derivative(body_rates)
+        return np.concatenate([dpos, dvel, quat_dot, body_rates_dot])
+
+    def _derive_orientation_from_velocity(self, position, velocity):
+        speed = np.linalg.norm(velocity)
+        if speed < 1e-8:
+            return np.array([1.0, 0.0, 0.0, 0.0])
+
+        pos_norm = np.linalg.norm(position)
+        local_vertical = position / pos_norm if pos_norm > 1e-8 else np.array([0.0, 0.0, 1.0])
+        forward_axis, right_axis, up_axis = build_aircraft_body_axes(velocity, local_vertical)
+        return quaternion_from_basis(forward_axis, right_axis, up_axis)
+
+    def _coerce_inertia(self, inertia):
+        if inertia is None:
+            inertia = np.diag([8.0e4, 1.2e5, 1.0e5])
+        inertia = np.asarray(inertia, dtype=float)
+        if inertia.shape == (3,):
+            inertia = np.diag(inertia)
+        if inertia.shape != (3, 3):
+            raise ValueError("inertia must have shape (3,) or (3, 3)")
+        return inertia
+
+    def _coerce_angular_damping(self, angular_damping):
+        if angular_damping is None:
+            return np.array([5.0e4, 6.0e4, 5.0e4])
+        angular_damping = np.asarray(angular_damping, dtype=float)
+        if angular_damping.shape != (3,):
+            raise ValueError("angular_damping must have shape (3,)")
+        return angular_damping
+
+    def _compute_world_acceleration(self, pos, vel, quaternion):
+        lat, lon, alt = ecef_to_lla(pos[0], pos[1], pos[2])
+
+        thrust_force_body = np.array([
+            np.clip(self.thrust_cmd, 0.0, self.t_max),
+            0.0,
+            0.0,
+        ])
+        thrust_force_world = rotate_vector_by_quaternion(thrust_force_body, quaternion)
+        drag_force_world = aerodynamic_drag_force(vel, alt, self.cd0, self.area)
+
+        acceleration = gravity(pos) + (thrust_force_world + drag_force_world) / self.mass
+        if self.use_coriolis:
+            acceleration += coriolis_acceleration(vel)
+        return acceleration
+
+    def _compute_body_rate_derivative(self, body_rates):
+        moments = np.array([
+            self.roll_moment_cmd,
+            -self.pitch_moment_cmd,
+            self.yaw_moment_cmd,
+        ])
+        moments -= self.angular_damping * body_rates
+        angular_momentum = self.inertia @ body_rates
+        return self.inv_inertia @ (moments - np.cross(body_rates, angular_momentum))
 
 
 class AircraftAutopilot(Controller):

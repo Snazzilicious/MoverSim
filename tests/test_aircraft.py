@@ -4,8 +4,9 @@ import numpy as np
 from mover_sim.core.platform import Platform
 from mover_sim.core.engine import SimulationEngine
 from mover_sim.core.observer import CSVLogger
-from mover_sim.models.aircraft_mover import AircraftMover, AircraftAutopilot
+from mover_sim.models.aircraft_mover import Aircraft6DOFMover, AircraftMover, AircraftAutopilot
 from mover_sim.math.coordinates import lla_to_ecef, ecef_to_lla
+from mover_sim.math.orientation import rotate_vector_by_quaternion
 
 def test_aircraft_mover_initialization():
     pos = lla_to_ecef(0.0, 0.0, 5000.0)
@@ -93,3 +94,81 @@ def test_csv_logger(tmp_path):
     # Verify first row time
     first_row = lines[1].strip().split(",")
     assert np.isclose(float(first_row[0]), 0.0)
+
+
+def test_aircraft_6dof_mover_initialization():
+    pos = lla_to_ecef(0.0, 0.0, 5000.0)
+    vel = np.array([0.0, 150.0, 0.0])
+
+    mover = Aircraft6DOFMover(pos, vel)
+
+    assert mover.get_state_dimension() == 13
+    assert mover.mass == 10000.0
+    assert mover.orientation.shape == (4,)
+    assert mover.body_rates.shape == (3,)
+    assert np.isclose(np.linalg.norm(mover.orientation), 1.0, atol=1e-7)
+
+
+def test_aircraft_6dof_roll_command_changes_bank():
+    engine = SimulationEngine()
+    engine.max_step = 0.02
+
+    pos0 = lla_to_ecef(0.0, 0.0, 2000.0)
+    vel0 = np.array([0.0, 180.0, 0.0])
+    mover = Aircraft6DOFMover(pos0, vel0, area=0.0, angular_damping=[1.0e4, 1.0e4, 1.0e4])
+    mover.roll_moment_cmd = 2.0e5
+
+    engine.register_platform(Platform("roll_test", mover))
+    engine.run(1.0)
+
+    local_up = mover.position / np.linalg.norm(mover.position)
+    body_up = rotate_vector_by_quaternion([0.0, 0.0, 1.0], mover.orientation)
+
+    assert mover.body_rates[0] > 0.0
+    assert np.dot(body_up, local_up) < 0.999
+
+
+def test_aircraft_6dof_pitch_command_changes_flight_path():
+    engine = SimulationEngine()
+    engine.max_step = 0.02
+
+    pos0 = lla_to_ecef(0.0, 0.0, 2000.0)
+    vel0 = np.array([0.0, 180.0, 0.0])
+    mover = Aircraft6DOFMover(
+        pos0,
+        vel0,
+        mass=1500.0,
+        area=0.0,
+        t_max=2.0e5,
+        angular_damping=[1.0e4, 1.0e4, 1.0e4],
+    )
+    mover.thrust_cmd = 2.0e5
+    mover.pitch_moment_cmd = 1.0e5
+
+    engine.register_platform(Platform("pitch_test", mover))
+    engine.run(5.0)
+
+    _, _, alt_end = ecef_to_lla(mover.position[0], mover.position[1], mover.position[2])
+    local_up = mover.position / np.linalg.norm(mover.position)
+    vertical_speed = np.dot(mover.velocity, local_up)
+
+    assert alt_end > 2000.0
+    assert vertical_speed > 0.0
+
+
+def test_aircraft_6dof_quaternion_remains_normalized():
+    engine = SimulationEngine()
+    engine.max_step = 0.02
+
+    pos0 = lla_to_ecef(0.0, 0.0, 2000.0)
+    vel0 = np.array([0.0, 180.0, 0.0])
+    mover = Aircraft6DOFMover(pos0, vel0, area=0.0)
+    mover.thrust_cmd = 5.0e4
+    mover.roll_moment_cmd = 5.0e4
+    mover.pitch_moment_cmd = 2.5e4
+    mover.yaw_moment_cmd = 1.5e4
+
+    engine.register_platform(Platform("quat_test", mover))
+    engine.run(5.0)
+
+    assert np.isclose(np.linalg.norm(mover.orientation), 1.0, atol=1e-3)
