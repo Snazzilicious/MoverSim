@@ -211,9 +211,11 @@ class SimulationEngine:
             # Seed the context with this mover's initial state and give it a context
             # reference.
             self.context.register(platform.mover, platform.mover.get_initial_state())
-        # If simulation is already running, initialize its controller
-        if self.running and platform.controller:
-            platform.controller.initialize(self)
+        # If simulation is already running, initialize its controller if present and
+        # publish that the platform joined the live simulation.
+        if self.running:
+            if platform.controller:
+                platform.controller.initialize(self)
             self.broker.publish("platform_registered", platform)
 
     def stop(self):
