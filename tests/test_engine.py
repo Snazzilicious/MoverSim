@@ -2,8 +2,23 @@ import pytest
 import numpy as np
 from mover_sim.core.broker import EventBroker
 from mover_sim.core.engine import EventScheduler, SimulationEngine
-from mover_sim.core.mover import AnalyticalMover, NewtonianMover
+from mover_sim.core.mover import AnalyticalMover, Mover, NewtonianMover
 from mover_sim.core.platform import Platform
+
+
+def test_mover_base_contract_supports_arbitrary_initial_state():
+    class GenericMover(Mover):
+        def get_state(self):
+            return self.get_initial_state()
+
+    mover = GenericMover([1.0, 2.0, 3.0, 4.0])
+
+    assert mover.get_state_dimension() == 4
+    assert np.allclose(mover.get_initial_state(), [1.0, 2.0, 3.0, 4.0])
+
+    state = mover.get_initial_state()
+    state[0] = 99.0
+    assert np.allclose(mover.get_initial_state(), [1.0, 2.0, 3.0, 4.0])
 
 def test_event_broker():
     broker = EventBroker()
@@ -124,6 +139,26 @@ def test_simulation_context_returns_state_vector_and_substep_time():
     assert mover.observed_time >= 0.0
     assert mover.observed_time <= engine.t
     assert np.allclose(mover.observed_state[:3], mover.observed_state[3:] * mover.observed_time)
+
+
+def test_newtonian_context_get_state_uses_mover_state_dimension():
+    engine = SimulationEngine()
+
+    class ExtendedStateMover(NewtonianMover):
+        def __init__(self):
+            super().__init__([1.0, 2.0, 3.0], [4.0, 5.0, 6.0])
+            self._extra_initial_state = np.array([7.0, 8.0])
+
+        def get_initial_state(self):
+            return np.concatenate([super().get_initial_state(), self._extra_initial_state])
+
+        def get_state_dimension(self):
+            return 8
+
+    mover = ExtendedStateMover()
+    engine.register_platform(Platform("extended", mover))
+
+    assert np.allclose(mover.get_state(), [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0])
 
 def test_analytical_mover_uses_substep_time_during_newtonian_integration():
     engine = SimulationEngine()

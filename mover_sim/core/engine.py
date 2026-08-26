@@ -94,7 +94,7 @@ class SimulationContext:
 
         Parameters:
             mover:         A NewtonianMover instance.
-            initial_state: Array-like of shape (6,): [x, y, z, vx, vy, vz].
+            initial_state: Array-like containing the mover's initial state vector.
         """
         start = len(self.committed_y)
         self._index_map[mover] = start
@@ -104,7 +104,7 @@ class SimulationContext:
 
     def get_state(self, mover):
         """
-        Return the 6-element [x, y, z, vx, vy, vz] state for mover.
+        Return the full state vector for mover.
 
         During ode_fun evaluation (_integrating is True), returns the current substep
         state so that coupled movers see values consistent with the calling mover's
@@ -112,7 +112,8 @@ class SimulationContext:
         """
         y = self._integration_y if self._integrating else self.committed_y
         s = self._index_map[mover]
-        return y[s:s + 6].copy()
+        n = mover.get_state_dimension()
+        return y[s:s + n].copy()
 
     def get_time(self):
         """
@@ -203,8 +204,7 @@ class SimulationEngine:
         platform.mover._context = self.context
         if isinstance(platform.mover, NewtonianMover):
             # Seed the context with this mover's initial state and give it a context
-            # reference. get_state() will be renamed get_initial_state() when mover.py
-            # is refactored; for now the existing method returns the same value.
+            # reference.
             self.context.register(platform.mover, platform.mover.get_initial_state())
         # If simulation is already running, initialize its controller
         if self.running and platform.controller:

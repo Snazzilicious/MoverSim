@@ -2,32 +2,40 @@ import numpy as np
 
 class Mover:
     """
-    Abstract base class for all movers. A Mover defines the kinematic and dynamic
-    behaviour of a platform.
+    Base class for all movers.
 
-    The constructor-provided initial position and velocity are used to seed state before
-    registration. After registration, Newtonian movers read live state from the shared
-    SimulationContext while analytical movers compute state directly from simulation time.
+    The shared contract is state-centric: a mover exposes an initial state vector and a
+    state dimension, while concrete subclasses define how to interpret and evolve that
+    state over time.
     """
-    def __init__(self, initial_position, initial_velocity=None):
+    def __init__(self, initial_state):
         """
         Parameters:
-            initial_position: ECEF coordinates [X, Y, Z] in meters (array-like).
-            initial_velocity: ECEF velocity [Vx, Vy, Vz] in meters/second (array-like).
+            initial_state: Initial mover state vector.
         """
         self.platform = None  # Linked when added to Platform
         self._context = None  # Injected by the engine at registration
-        self._initial_position = np.asarray(initial_position, dtype=float)
-        self._initial_velocity = np.asarray(initial_velocity, dtype=float) if initial_velocity is not None else np.zeros(3)
+        self._initial_state = np.asarray(initial_state, dtype=float).copy()
+        if self._initial_state.ndim != 1:
+            raise ValueError("initial_state must be a 1D state vector")
 
     def get_initial_state(self):
         """
-        Return the 6-element initial state vector [x, y, z, vx, vy, vz].
-
-        Called once by the engine at registration time to seed the SimulationContext.
-        After that, initial_position and initial_velocity are no longer the live state source.
+        Return the initial state vector used to seed the simulation.
         """
-        return np.concatenate([self._initial_position, self._initial_velocity])
+        return self._initial_state.copy()
+
+    def get_state_dimension(self):
+        """Return the number of scalar values in this mover's state vector."""
+        return self._initial_state.size
+
+    def get_state(self):
+        """Return the mover's current state vector."""
+        raise NotImplementedError
+
+    def compute_state_derivative(self, t, state):
+        """Return the derivative of the supplied state vector at time t."""
+        raise NotImplementedError
 
     @property
     def t(self):
@@ -42,6 +50,15 @@ class AnalyticalMover(Mover):
     Base class for movers whose motion is governed by explicit analytical functions of time.
     Bypasses the numerical ODE solver.
     """
+
+    def __init__(self, initial_position, initial_velocity=None):
+        initial_position = np.asarray(initial_position, dtype=float)
+        initial_velocity = (
+            np.asarray(initial_velocity, dtype=float)
+            if initial_velocity is not None
+            else np.zeros(3)
+        )
+        super().__init__(np.concatenate([initial_position, initial_velocity]))
     
     @property
     def position(self):
@@ -79,15 +96,15 @@ class NewtonianMover(Mover):
             enable_gravity: If True, applies standard gravitational forces in derivative calculations.
             enable_coriolis: If True, applies Coriolis forces in derivative calculations.
         """
-        super().__init__(initial_position, initial_velocity)
+        initial_position = np.asarray(initial_position, dtype=float)
+        initial_velocity = (
+            np.asarray(initial_velocity, dtype=float)
+            if initial_velocity is not None
+            else np.zeros(3)
+        )
+        super().__init__(np.concatenate([initial_position, initial_velocity]))
         self.enable_gravity = enable_gravity
         self.enable_coriolis = enable_coriolis
-
-    def get_state_dimension(self):
-        """
-        Returns the number of state variables (typically 6: X, Y, Z, Vx, Vy, Vz).
-        """
-        return 6
     
     @property
     def position(self):
@@ -101,7 +118,7 @@ class NewtonianMover(Mover):
 
     def get_state(self):
         """
-        Return the 6-element [x, y, z, vx, vy, vz] state vector.
+        Return the mover state vector.
 
         Routes through the SimulationContext so that:
           - During ode_fun evaluation: returns the current RK45 substep values,
@@ -115,6 +132,13 @@ class NewtonianMover(Mover):
         if self._context is not None:
             return self._context.get_state(self)
         return self.get_initial_state()
+
+    def compute_state_derivative(self, t, state):
+        """Map the translational state vector to the legacy derivative pair API."""
+        pos = state[:3]
+        vel = state[3:6]
+        dpos, dvel = self.compute_derivatives(t, pos, vel)
+        return np.concatenate([dpos, dvel])
 
     def compute_derivatives(self, t, pos, vel):
         """
