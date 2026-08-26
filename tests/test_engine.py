@@ -12,19 +12,15 @@ from mover_sim.core.mover import (
 from mover_sim.core.platform import Platform
 
 
-def test_mover_base_contract_supports_arbitrary_initial_state():
+def test_mover_base_contract_supports_arbitrary_state_dimension():
     class GenericMover(Mover):
         def get_state(self):
-            return self.get_initial_state()
+            return np.array([1.0, 2.0, 3.0, 4.0])
 
-    mover = GenericMover([1.0, 2.0, 3.0, 4.0])
+    mover = GenericMover()
 
     assert mover.get_state_dimension() == 4
-    assert np.allclose(mover.get_initial_state(), [1.0, 2.0, 3.0, 4.0])
-
-    state = mover.get_initial_state()
-    state[0] = 99.0
-    assert np.allclose(mover.get_initial_state(), [1.0, 2.0, 3.0, 4.0])
+    assert np.allclose(mover.get_state(), [1.0, 2.0, 3.0, 4.0])
 
 def test_event_broker():
     broker = EventBroker()
@@ -221,7 +217,7 @@ def test_analytical_mover_uses_substep_time_during_newtonian_integration():
 
     class ClockedAnalyticalMover(TranslationalAnalyticalMover):
         def __init__(self):
-            super().__init__([0.0, 0.0, 0.0])
+            super().__init__()
 
         def get_state(self):
             t = self.t
@@ -263,7 +259,7 @@ def test_analytical_only_run_publishes_states_at_context_time():
 
     class ClockedAnalyticalMover(TranslationalAnalyticalMover):
         def __init__(self):
-            super().__init__([0.0, 0.0, 0.0])
+            super().__init__()
 
         def get_state(self):
             t = self.t

@@ -4,30 +4,21 @@ class Mover:
     """
     Base class for all movers.
 
-    The shared contract is state-centric: a mover exposes an initial state vector and a
-    state dimension, while concrete subclasses define how to interpret and evolve that
-    state over time.
+    The shared contract is state-centric: a mover exposes its current state and state
+    dimension, while concrete subclasses define how to interpret and evolve that state
+    over time.
     """
-    def __init__(self, initial_state):
-        """
-        Parameters:
-            initial_state: Initial mover state vector.
-        """
+    def __init__(self):
         self.platform = None  # Linked when added to Platform
         self._context = None  # Injected by the engine at registration
-        self._initial_state = np.asarray(initial_state, dtype=float).copy()
-        if self._initial_state.ndim != 1:
-            raise ValueError("initial_state must be a 1D state vector")
 
     def get_initial_state(self):
-        """
-        Return the initial state vector used to seed the simulation.
-        """
-        return self._initial_state.copy()
+        """Return the initial state vector used to seed the simulation."""
+        raise NotImplementedError
 
     def get_state_dimension(self):
         """Return the number of scalar values in this mover's state vector."""
-        return self._initial_state.size
+        return np.asarray(self.get_state(), dtype=float).size
 
     def get_state(self):
         """Return the mover's current state vector."""
@@ -50,6 +41,9 @@ class AnalyticalMover(Mover):
     Base class for movers whose motion is governed by explicit analytical functions of time.
     Bypasses the numerical ODE solver.
     """
+
+    def __init__(self):
+        super().__init__()
 
     def get_state(self):
         """
@@ -75,9 +69,20 @@ class NewtonianMover(Mover):
             enable_gravity: If True, applies standard gravitational forces in derivative calculations.
             enable_coriolis: If True, applies Coriolis forces in derivative calculations.
         """
-        super().__init__(initial_state)
+        super().__init__()
+        self._initial_state = np.asarray(initial_state, dtype=float).copy()
+        if self._initial_state.ndim != 1:
+            raise ValueError("initial_state must be a 1D state vector")
         self.enable_gravity = enable_gravity
         self.enable_coriolis = enable_coriolis
+
+    def get_initial_state(self):
+        """Return the initial state vector used to seed the simulation."""
+        return self._initial_state.copy()
+
+    def get_state_dimension(self):
+        """Return the number of scalar values in this mover's state vector."""
+        return self._initial_state.size
 
     def get_state(self):
         """
@@ -136,8 +141,8 @@ class TranslationalMover(Mover):
 class TranslationalAnalyticalMover(TranslationalMover, AnalyticalMover):
     """Analytical mover with the legacy translational state convention."""
 
-    def __init__(self, initial_position, initial_velocity=None):
-        super().__init__(self.build_translational_state(initial_position, initial_velocity))
+    def __init__(self):
+        super().__init__()
 
 
 class TranslationalNewtonianMover(TranslationalMover, NewtonianMover):

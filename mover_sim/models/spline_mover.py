@@ -19,7 +19,7 @@ class SplineMover(TranslationalAnalyticalMover):
         if len(self.times) < 2:
             raise ValueError("At least 2 points are required for spline interpolation")
             
-        super().__init__(self.positions[0])
+        super().__init__()
         
         # Fit cubic spline (clamped boundary conditions to start/stop cleanly)
         self.spline = CubicSpline(self.times, self.positions, bc_type='clamped')
@@ -54,7 +54,7 @@ class WaypointMover(TranslationalAnalyticalMover):
         if len(self.times) < 1:
             raise ValueError("At least 1 waypoint is required")
             
-        super().__init__(self.positions[0])
+        super().__init__()
 
     def get_state(self):
         t = self.t
