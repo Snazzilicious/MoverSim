@@ -103,7 +103,7 @@ class NewtonianMover(Mover):
 
 
 class TranslationalMover(Mover):
-    """Compatibility layer for movers that interpret state as position and velocity."""
+    """Mixin for movers that interpret state as position and velocity."""
 
     @staticmethod
     def build_translational_state(initial_position, initial_velocity=None):
@@ -135,14 +135,14 @@ class TranslationalMover(Mover):
 
 
 class TranslationalAnalyticalMover(TranslationalMover, AnalyticalMover):
-    """Analytical mover with the legacy translational state convention."""
+    """Analytical mover whose state is organized as position and velocity."""
 
     def __init__(self):
         super().__init__()
 
 
 class TranslationalNewtonianMover(TranslationalMover, NewtonianMover):
-    """Newtonian mover with the legacy translational state convention."""
+    """Newtonian mover whose state is organized as position and velocity."""
 
     def __init__(self, initial_position, initial_velocity=None):
         super().__init__(self.build_translational_state(initial_position, initial_velocity))
