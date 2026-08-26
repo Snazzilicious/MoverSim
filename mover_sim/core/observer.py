@@ -1,5 +1,7 @@
 import csv
 
+import numpy as np
+
 from mover_sim.math.coordinates import ecef_to_lla
 
 
@@ -16,12 +18,16 @@ class BaseTrajectoryLogger:
         self,
         engine,
         sample_interval=1.0,
+        include_state=True,
+        include_lla=True,
         include_events=False,
         event_topics=None,
         batch_size=100,
     ):
         self.engine = engine
         self.sample_interval = sample_interval
+        self.include_state = include_state
+        self.include_lla = include_lla
         self.include_events = include_events
         self.event_topics = list(event_topics or [])
         self.batch_size = batch_size
@@ -116,6 +122,52 @@ class BaseTrajectoryLogger:
             self._open()
             self._opened = True
 
+    def _slice_optional_state(self, state, mover, method_name, expected_size):
+        if not hasattr(mover, method_name):
+            return None
+
+        state_slice = getattr(mover, method_name)()
+        values = np.asarray(state[state_slice], dtype=float).copy()
+        if values.shape != (expected_size,):
+            return None
+        return values
+
+    def _extract_platform_record(self, t, platform_id):
+        """Build a normalized record dict for one platform sample."""
+        platform = self.engine.platforms[platform_id]
+        mover = platform.mover
+
+        state = np.asarray(mover.get_state(), dtype=float).copy()
+        record = {
+            "time": float(t),
+            "platform_id": platform_id,
+            "state": state if self.include_state else None,
+            "state_dim": int(state.size),
+            "position": None,
+            "velocity": None,
+            "lla": None,
+            "orientation": None,
+            "body_rates": None,
+        }
+
+        if hasattr(mover, "position"):
+            position = np.asarray(mover.position, dtype=float).copy()
+            if position.shape == (3,):
+                record["position"] = position
+
+        if hasattr(mover, "velocity"):
+            velocity = np.asarray(mover.velocity, dtype=float).copy()
+            if velocity.shape == (3,):
+                record["velocity"] = velocity
+
+        if self.include_lla and record["position"] is not None:
+            pos = record["position"]
+            record["lla"] = np.array(ecef_to_lla(pos[0], pos[1], pos[2]), dtype=float)
+
+        record["orientation"] = self._slice_optional_state(state, mover, "get_orientation_slice", 4)
+        record["body_rates"] = self._slice_optional_state(state, mover, "get_body_rate_slice", 3)
+        return record
+
     def _on_sim_start(self, t):
         due_platform_ids = self._get_due_platform_ids(t, force=True)
         if due_platform_ids:
@@ -182,37 +234,31 @@ class CSVLogger(BaseTrajectoryLogger):
         if not self.writer:
             return
 
+        records_by_platform = {}
         for plat_id in platform_ids:
-            plat = self.engine.platforms[plat_id]
-            pos = plat.mover.position
-            vel = plat.mover.velocity
-            lat, lon, alt = ecef_to_lla(pos[0], pos[1], pos[2])
-            self.buffer_platform_record(
-                plat_id,
-                {
-                    "time": t,
-                    "position": [pos[0], pos[1], pos[2]],
-                    "lla": [lat, lon, alt],
-                    "velocity": [vel[0], vel[1], vel[2]],
-                },
-            )
+            record = self._extract_platform_record(t, plat_id)
+            records_by_platform[plat_id] = record
+            self.buffer_platform_record(plat_id, record)
 
         row = [t]
         for plat_id in sorted(self.engine.platforms.keys()):
-            plat = self.engine.platforms[plat_id]
-            pos = plat.mover.position
-            vel = plat.mover.velocity
-            lat, lon, alt = ecef_to_lla(pos[0], pos[1], pos[2])
+            record = records_by_platform.get(plat_id)
+            if record is None:
+                record = self._extract_platform_record(t, plat_id)
+
+            pos = record["position"]
+            vel = record["velocity"]
+            lla = record["lla"]
             row.extend([
-                pos[0],
-                pos[1],
-                pos[2],
-                lat,
-                lon,
-                alt,
-                vel[0],
-                vel[1],
-                vel[2],
+                pos[0] if pos is not None else "",
+                pos[1] if pos is not None else "",
+                pos[2] if pos is not None else "",
+                lla[0] if lla is not None else "",
+                lla[1] if lla is not None else "",
+                lla[2] if lla is not None else "",
+                vel[0] if vel is not None else "",
+                vel[1] if vel is not None else "",
+                vel[2] if vel is not None else "",
             ])
         self.writer.writerow(row)
 
