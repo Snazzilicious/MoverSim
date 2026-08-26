@@ -78,11 +78,16 @@ def test_aerodynamic_drag():
 def test_newtonian_mover_with_gravity():
     engine = SimulationEngine()
     engine.max_step = 0.1
+
+    class FallingRockMover(TranslationalNewtonianMover):
+        def compute_derivatives(self, t, pos, vel):
+            dpos, dvel = super().compute_derivatives(t, pos, vel)
+            return dpos, dvel + gravity(pos)
     
     # Drop an object from 10,000 meters altitude above the equator
     # Equator surface ECEF: [6378137.0, 0.0, 0.0]
     initial_pos = np.array([6378137.0 + 10000.0, 0.0, 0.0])
-    mover = TranslationalNewtonianMover(initial_pos, np.zeros(3), enable_gravity=True, enable_coriolis=False)
+    mover = FallingRockMover(initial_pos, np.zeros(3))
     platform = Platform("falling_rock", mover)
     engine.register_platform(platform)
     
@@ -94,3 +99,18 @@ def test_newtonian_mover_with_gravity():
     assert mover.velocity[0] < 0.0  # Velocity should point inwards (negative X)
     assert np.isclose(mover.position[1], 0.0, atol=1e-7)
     assert np.isclose(mover.position[2], 0.0, atol=1e-7)
+
+
+def test_newtonian_mover_has_no_implicit_gravity():
+    engine = SimulationEngine()
+    engine.max_step = 0.1
+
+    initial_pos = np.array([6378137.0 + 10000.0, 0.0, 0.0])
+    mover = TranslationalNewtonianMover(initial_pos, np.zeros(3))
+    platform = Platform("coasting_rock", mover)
+    engine.register_platform(platform)
+
+    engine.run(2.0)
+
+    assert np.allclose(mover.position, initial_pos)
+    assert np.allclose(mover.velocity, np.zeros(3))

@@ -62,19 +62,15 @@ class NewtonianMover(Mover):
     compute_state_derivative() and may hold references to other movers to call get_state()
     on them; the context ensures all movers see a consistent substep snapshot.
     """
-    def __init__(self, initial_state, enable_gravity=False, enable_coriolis=False):
+    def __init__(self, initial_state):
         """
         Parameters:
             initial_state: Initial mover state vector.
-            enable_gravity: If True, applies standard gravitational forces in derivative calculations.
-            enable_coriolis: If True, applies Coriolis forces in derivative calculations.
         """
         super().__init__()
         self._initial_state = np.asarray(initial_state, dtype=float).copy()
         if self._initial_state.ndim != 1:
             raise ValueError("initial_state must be a 1D state vector")
-        self.enable_gravity = enable_gravity
-        self.enable_coriolis = enable_coriolis
 
     def get_initial_state(self):
         """Return the initial state vector used to seed the simulation."""
@@ -148,12 +144,8 @@ class TranslationalAnalyticalMover(TranslationalMover, AnalyticalMover):
 class TranslationalNewtonianMover(TranslationalMover, NewtonianMover):
     """Newtonian mover with the legacy translational state convention."""
 
-    def __init__(self, initial_position, initial_velocity=None, enable_gravity=False, enable_coriolis=False):
-        super().__init__(
-            self.build_translational_state(initial_position, initial_velocity),
-            enable_gravity=enable_gravity,
-            enable_coriolis=enable_coriolis,
-        )
+    def __init__(self, initial_position, initial_velocity=None):
+        super().__init__(self.build_translational_state(initial_position, initial_velocity))
 
     def compute_state_derivative(self, t, state):
         """Map the translational state vector to the legacy derivative pair API."""
@@ -164,7 +156,10 @@ class TranslationalNewtonianMover(TranslationalMover, NewtonianMover):
 
     def compute_derivatives(self, t, pos, vel):
         """
-        Compute derivatives of the state variables (dPos/dt, dVel/dt).
+        Compute translational derivatives of the state variables (dPos/dt, dVel/dt).
+
+        The base translational model is pure kinematics: position integrates velocity and
+        acceleration is zero unless a subclass adds explicit force-model terms.
         
         Parameters:
             t: Current time (seconds).
@@ -175,15 +170,4 @@ class TranslationalNewtonianMover(TranslationalMover, NewtonianMover):
             dpos: Position derivatives [Vx, Vy, Vz] (3,).
             dvel: Velocity derivatives (accelerations) [Ax, Ay, Az] (3,).
         """
-        dpos = vel
-        dvel = np.zeros(3)
-        
-        if self.enable_gravity:
-            from mover_sim.math.physics import gravity
-            dvel += gravity(pos)
-            
-        if self.enable_coriolis:
-            from mover_sim.math.physics import coriolis_acceleration
-            dvel += coriolis_acceleration(vel)
-            
-        return dpos, dvel
+        return vel, np.zeros(3)

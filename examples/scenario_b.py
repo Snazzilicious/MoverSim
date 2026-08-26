@@ -12,7 +12,7 @@ from mover_sim.core.engine import SimulationEngine
 from mover_sim.core.observer import CSVLogger
 from mover_sim.models.aircraft_mover import AircraftMover, AircraftAutopilot
 from mover_sim.models.spline_mover import WaypointMover
-from mover_sim.math.physics import aerodynamic_drag_force
+from mover_sim.math.physics import aerodynamic_drag_force, coriolis_acceleration, gravity
 from mover_sim.math.coordinates import ecef_to_lla, enu_to_ecef
 
 # Define Missile classes for dynamic spawn
@@ -21,8 +21,7 @@ class MissileMover(TranslationalNewtonianMover):
     Newtonian mover for a rocket-propelled missile.
     """
     def __init__(self, initial_position, initial_velocity):
-        # Enable gravity and Coriolis
-        super().__init__(initial_position, initial_velocity, enable_gravity=True, enable_coriolis=True)
+        super().__init__(initial_position, initial_velocity)
         self.mass = 80.0         # Mass (kg)
         self.thrust = 12000.0     # Thrust force (Newtons) - high thrust
         self.cd = 0.6            # Drag coefficient (higher to limit speed and reduce turning radius)
@@ -30,7 +29,8 @@ class MissileMover(TranslationalNewtonianMover):
         self.thrust_dir = np.zeros(3)  # Direction vector of thrust (unit vector)
 
     def compute_derivatives(self, t, pos, vel):
-        dpos, dvel_base = super().compute_derivatives(t, pos, vel)
+        dpos, dvel = super().compute_derivatives(t, pos, vel)
+        dvel = dvel + gravity(pos) + coriolis_acceleration(vel)
         
         # Compute aerodynamic drag
         lat, lon, alt = ecef_to_lla(pos[0], pos[1], pos[2])
@@ -42,7 +42,7 @@ class MissileMover(TranslationalNewtonianMover):
         # Net acceleration
         accel = (drag + thrust_force) / self.mass
         
-        return dpos, dvel_base + accel
+        return dpos, dvel + accel
 
 
 class MissileGuidance(Controller):

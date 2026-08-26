@@ -1,7 +1,7 @@
 import numpy as np
 from mover_sim.core.mover import TranslationalNewtonianMover
 from mover_sim.core.controller import Controller
-from mover_sim.math.physics import gravity, aerodynamic_drag_force, air_density, GM
+from mover_sim.math.physics import aerodynamic_drag_force, air_density, coriolis_acceleration, gravity, GM
 from mover_sim.math.coordinates import ecef_to_lla, ecef_to_enu, lla_to_ecef
 
 class AircraftMover(TranslationalNewtonianMover):
@@ -19,8 +19,7 @@ class AircraftMover(TranslationalNewtonianMover):
             cd0: Zero-lift drag coefficient (dimensionless).
             t_max: Maximum engine thrust in Newtons.
         """
-        # Enable gravity and Coriolis in the Newtonian base class
-        super().__init__(initial_position, initial_velocity=initial_velocity, enable_gravity=True, enable_coriolis=True)
+        super().__init__(initial_position, initial_velocity=initial_velocity)
         self.mass = mass
         self.area = area
         self.cd0 = cd0
@@ -35,17 +34,16 @@ class AircraftMover(TranslationalNewtonianMover):
         """
         Compute derivatives (dPos/dt, dVel/dt) including aerodynamic forces, thrust, gravity, and Coriolis.
         """
-        # 1. Base gravity and Coriolis from NewtonianMover
-        dpos, dvel_base = super().compute_derivatives(t, pos, vel)
+        dpos, dvel = super().compute_derivatives(t, pos, vel)
+        dvel = dvel + gravity(pos) + coriolis_acceleration(vel)
         
         v_mag = np.linalg.norm(vel)
         if v_mag < 1.0:
             # Avoid divide-by-zero for orientation at rest
-            return dpos, dvel_base
+            return dpos, dvel
             
         # Get altitude for air density
         lat, lon, alt = ecef_to_lla(pos[0], pos[1], pos[2])
-        rho = air_density(alt)
         
         # 2. Build local orientation vectors in ECEF
         u_v = vel / v_mag                      # Flight path / velocity direction
@@ -80,7 +78,7 @@ class AircraftMover(TranslationalNewtonianMover):
         accel_aero_thrust = (drag_force + lift_force + thrust_force) / self.mass
         
         # Combined acceleration
-        dvel = dvel_base + accel_aero_thrust
+        dvel = dvel + accel_aero_thrust
         
         return dpos, dvel
 
