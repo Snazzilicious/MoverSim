@@ -114,3 +114,32 @@ def test_newtonian_mover_has_no_implicit_gravity():
 
     assert np.allclose(mover.position, initial_pos)
     assert np.allclose(mover.velocity, np.zeros(3))
+
+
+def test_newtonian_subclass_can_use_fully_custom_dynamics_without_gravity():
+    engine = SimulationEngine()
+    engine.max_step = 0.05
+
+    class CustomAccelerationMover(TranslationalNewtonianMover):
+        def __init__(self, pos, vel, acceleration):
+            super().__init__(pos, vel)
+            self.acceleration = np.asarray(acceleration, dtype=float)
+
+        def compute_derivatives(self, t, pos, vel):
+            dpos, dvel = super().compute_derivatives(t, pos, vel)
+            return dpos, dvel + self.acceleration
+
+    initial_pos = np.array([6378137.0 + 10000.0, 1000.0, -500.0])
+    initial_vel = np.array([10.0, -4.0, 2.0])
+    acceleration = np.array([1.5, -0.5, 0.25])
+    mover = CustomAccelerationMover(initial_pos, initial_vel, acceleration)
+    engine.register_platform(Platform("custom_dynamics", mover))
+
+    duration = 2.0
+    engine.run(duration)
+
+    expected_position = initial_pos + initial_vel * duration + 0.5 * acceleration * duration**2
+    expected_velocity = initial_vel + acceleration * duration
+
+    assert np.allclose(mover.position, expected_position, atol=1e-6)
+    assert np.allclose(mover.velocity, expected_velocity, atol=1e-6)
