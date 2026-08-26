@@ -42,11 +42,13 @@ def test_aircraft_spline_mover_straight_segment_gives_level_attitude():
     quaternion = state[6:10]
     body_rates = state[10:13]
     forward = rotate_vector_by_quaternion([1.0, 0.0, 0.0], quaternion)
+    body_right = rotate_vector_by_quaternion([0.0, 1.0, 0.0], quaternion)
     body_up = rotate_vector_by_quaternion([0.0, 0.0, 1.0], quaternion)
     local_up = _local_up(state[:3])
 
     assert mover.get_state_dimension() == 13
     assert np.isclose(np.linalg.norm(quaternion), 1.0, atol=1e-7)
+    assert abs(np.dot(body_right, local_up)) < 1e-3
     assert abs(np.dot(forward, local_up)) < 1e-3
     assert np.dot(body_up, local_up) > 0.999
     assert np.linalg.norm(body_rates) < 1e-3
@@ -93,3 +95,26 @@ def test_aircraft_spline_mover_turning_segment_gives_banked_attitude():
     assert np.isclose(np.linalg.norm(quaternion), 1.0, atol=1e-7)
     assert abs(np.dot(body_right, local_up)) > 0.05
     assert np.linalg.norm(body_rates) > 1e-4
+
+
+def test_aircraft_spline_mover_endpoint_state_zeroes_velocity_and_body_rates():
+    times = [0.0, 5.0, 10.0]
+    positions = _enu_positions([
+        [0.0, 0.0, 1000.0],
+        [1000.0, 300.0, 1200.0],
+        [2000.0, 600.0, 1400.0],
+    ])
+
+    mover = AircraftSplineMover(times, positions)
+
+    _attach_time(mover, -1.0)
+    state_start = mover.get_state()
+    assert np.allclose(state_start[3:6], np.zeros(3))
+    assert np.allclose(state_start[10:13], np.zeros(3))
+    assert np.isclose(np.linalg.norm(state_start[6:10]), 1.0, atol=1e-7)
+
+    _attach_time(mover, 12.0)
+    state_end = mover.get_state()
+    assert np.allclose(state_end[3:6], np.zeros(3))
+    assert np.allclose(state_end[10:13], np.zeros(3))
+    assert np.isclose(np.linalg.norm(state_end[6:10]), 1.0, atol=1e-7)
