@@ -350,3 +350,96 @@ class AircraftAutopilot(Controller):
         mover.thrust_cmd = np.clip(thrust_req, 0.0, mover.t_max)
         # Note: no solver reset needed — the engine recreates the RK45 solver at the
         # start of each step_continuous call, so updated forces are always picked up.
+
+
+class Aircraft6DOFAutopilot(Controller):
+    """Waypoint-following autopilot for Aircraft6DOFMover."""
+
+    def __init__(self, waypoints, target_speed=150.0, waypoint_radius=500.0, update_interval=0.05):
+        """
+        Parameters:
+            waypoints: List of ECEF coordinates [X, Y, Z] in meters.
+            target_speed: Target speed in m/s.
+            waypoint_radius: Distance in meters to trigger waypoint completion.
+            update_interval: Autopilot execution period (seconds).
+        """
+        super().__init__(update_interval=update_interval)
+        self.waypoints = [np.asarray(wp, dtype=float) for wp in waypoints]
+        self.target_speed = float(target_speed)
+        self.waypoint_radius = float(waypoint_radius)
+        self.current_wp_idx = 0
+        self.completed = False
+
+        self.k_speed = 2000.0
+        self.k_roll = 2.5e5
+        self.k_roll_rate = 8.0e4
+        self.k_pitch = 1.2e6
+        self.k_pitch_rate = 2.0e5
+        self.k_yaw = 1.0e5
+        self.k_yaw_rate = 8.0e4
+
+    def update(self, t, engine):
+        mover = self.platform.mover
+        if not isinstance(mover, Aircraft6DOFMover):
+            return
+
+        pos = mover.position
+        vel = mover.velocity
+        speed = np.linalg.norm(vel)
+
+        if self.current_wp_idx >= len(self.waypoints):
+            self.completed = True
+            mover.thrust_cmd = 0.0
+            mover.roll_moment_cmd = -self.k_roll_rate * mover.body_rates[0]
+            mover.pitch_moment_cmd = self.k_pitch_rate * mover.body_rates[1]
+            mover.yaw_moment_cmd = -self.k_yaw_rate * mover.body_rates[2]
+            return
+
+        wp_target = self.waypoints[self.current_wp_idx]
+        rel_pos = wp_target - pos
+        distance = np.linalg.norm(rel_pos)
+
+        if distance < self.waypoint_radius:
+            self.current_wp_idx += 1
+            engine.broker.publish("waypoint_reached", self.platform, self.current_wp_idx - 1)
+            self.update(t, engine)
+            return
+
+        local_up = pos / np.linalg.norm(pos)
+        forward = rotate_vector_by_quaternion([1.0, 0.0, 0.0], mover.orientation)
+        right = rotate_vector_by_quaternion([0.0, 1.0, 0.0], mover.orientation)
+
+        rel_horizontal = rel_pos - np.dot(rel_pos, local_up) * local_up
+        horizontal_norm = np.linalg.norm(rel_horizontal)
+        if horizontal_norm > 1e-8:
+            desired_horizontal = rel_horizontal / horizontal_norm
+        else:
+            desired_horizontal = forward - np.dot(forward, local_up) * local_up
+            desired_horizontal /= max(np.linalg.norm(desired_horizontal), 1e-8)
+
+        forward_horizontal = forward - np.dot(forward, local_up) * local_up
+        forward_horizontal_norm = np.linalg.norm(forward_horizontal)
+        if forward_horizontal_norm > 1e-8:
+            forward_horizontal = forward_horizontal / forward_horizontal_norm
+        else:
+            forward_horizontal = desired_horizontal
+
+        heading_error = np.arctan2(
+            np.dot(np.cross(forward_horizontal, desired_horizontal), local_up),
+            np.clip(np.dot(forward_horizontal, desired_horizontal), -1.0, 1.0),
+        )
+
+        desired_flight_path = np.arctan2(np.dot(rel_pos, local_up), max(horizontal_norm, 1e-8))
+        current_flight_path = np.arctan2(np.dot(vel, local_up), max(np.linalg.norm(vel - np.dot(vel, local_up) * local_up), 1e-8))
+        pitch_error = desired_flight_path - current_flight_path
+
+        lateral_velocity = np.dot(vel, right)
+        yaw_correction = lateral_velocity / max(speed, 1.0)
+
+        drag_force_mag = np.linalg.norm(aerodynamic_drag_force(vel, ecef_to_lla(pos[0], pos[1], pos[2])[2], mover.cd0, mover.area))
+        thrust_req = drag_force_mag + mover.mass * self.k_speed * (self.target_speed - speed)
+        mover.thrust_cmd = np.clip(thrust_req, 0.0, mover.t_max)
+
+        mover.roll_moment_cmd = self.k_roll * heading_error - self.k_roll_rate * mover.body_rates[0]
+        mover.pitch_moment_cmd = self.k_pitch * pitch_error + self.k_pitch_rate * mover.body_rates[1]
+        mover.yaw_moment_cmd = -self.k_yaw * yaw_correction - self.k_yaw_rate * mover.body_rates[2]

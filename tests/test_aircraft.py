@@ -4,7 +4,12 @@ import numpy as np
 from mover_sim.core.platform import Platform
 from mover_sim.core.engine import SimulationEngine
 from mover_sim.core.observer import CSVLogger
-from mover_sim.models.aircraft_mover import Aircraft6DOFMover, AircraftMover, AircraftAutopilot
+from mover_sim.models.aircraft_mover import (
+    Aircraft6DOFAutopilot,
+    Aircraft6DOFMover,
+    AircraftMover,
+    AircraftAutopilot,
+)
 from mover_sim.math.coordinates import lla_to_ecef, ecef_to_lla
 from mover_sim.math.orientation import rotate_vector_by_quaternion
 
@@ -172,3 +177,52 @@ def test_aircraft_6dof_quaternion_remains_normalized():
     engine.run(5.0)
 
     assert np.isclose(np.linalg.norm(mover.orientation), 1.0, atol=1e-3)
+
+
+def test_aircraft_6dof_autopilot_generates_moment_commands():
+    engine = SimulationEngine()
+
+    pos0 = lla_to_ecef(0.0, 0.0, 2000.0)
+    vel0 = np.array([0.0, 180.0, 0.0])
+    mover = Aircraft6DOFMover(pos0, vel0, mass=2000.0, area=0.0, t_max=2.0e5, use_coriolis=False)
+    wp = lla_to_ecef(0.0, 0.02, 2400.0)
+    autopilot = Aircraft6DOFAutopilot([wp], target_speed=220.0, waypoint_radius=100.0, update_interval=0.1)
+
+    platform = Platform("f16_6dof", mover, autopilot)
+    engine.register_platform(platform)
+    autopilot.initialize(engine)
+    autopilot.update(0.0, engine)
+
+    assert mover.thrust_cmd > 0.0
+    assert abs(mover.pitch_moment_cmd) > 0.0
+
+
+def test_aircraft_6dof_autopilot_changes_trajectory_toward_waypoint():
+    engine = SimulationEngine()
+    engine.max_step = 0.02
+
+    pos0 = lla_to_ecef(0.0, 0.0, 2000.0)
+    vel0 = np.array([0.0, 180.0, 0.0])
+    mover = Aircraft6DOFMover(
+        pos0,
+        vel0,
+        mass=2000.0,
+        area=0.02,
+        t_max=2.0e5,
+        angular_damping=[8.0e3, 8.0e3, 8.0e3],
+    )
+    wp = lla_to_ecef(0.0, 0.03, 2400.0)
+    autopilot = Aircraft6DOFAutopilot([wp], target_speed=220.0, waypoint_radius=150.0, update_interval=0.05)
+
+    platform = Platform("f16_6dof", mover, autopilot)
+    engine.register_platform(platform)
+
+    distance0 = np.linalg.norm(wp - mover.position)
+    _, lon0, alt0 = ecef_to_lla(mover.position[0], mover.position[1], mover.position[2])
+    engine.run(6.0)
+    _, lon_end, alt_end = ecef_to_lla(mover.position[0], mover.position[1], mover.position[2])
+    distance_end = np.linalg.norm(wp - mover.position)
+
+    assert lon_end > lon0
+    assert distance_end < distance0
+    assert alt_end > alt0 - 300.0
