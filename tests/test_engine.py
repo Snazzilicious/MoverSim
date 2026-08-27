@@ -4,9 +4,9 @@ from mover_sim.core.broker import EventBroker
 from mover_sim.core.engine import EventScheduler, SimulationEngine
 from mover_sim.core.mover import (
     AnalyticalMover,
+    IntegratedMover,
     Mover,
-    NewtonianMover,
-    TranslationalNewtonianMover,
+    TranslationalIntegratedMover,
 )
 from mover_sim.core.platform import Platform
 
@@ -117,7 +117,7 @@ def test_simulation_engine_run():
 def test_simulation_context_returns_state_vector_and_substep_time():
     engine = SimulationEngine()
 
-    class TrackingMover(TranslationalNewtonianMover):
+    class TrackingMover(TranslationalIntegratedMover):
         def __init__(self, pos, vel):
             super().__init__(pos, vel)
             self.observed_state = None
@@ -142,10 +142,10 @@ def test_simulation_context_returns_state_vector_and_substep_time():
     assert np.allclose(mover.observed_state[:3], mover.observed_state[3:] * mover.observed_time)
 
 
-def test_newtonian_context_get_state_uses_mover_state_dimension():
+def test_integrated_context_get_state_uses_mover_state_dimension():
     engine = SimulationEngine()
 
-    class ExtendedStateMover(NewtonianMover):
+    class ExtendedStateMover(IntegratedMover):
         def __init__(self):
             super().__init__([1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0])
 
@@ -161,9 +161,9 @@ def test_newtonian_context_get_state_uses_mover_state_dimension():
 def test_simulation_context_tracks_distinct_state_slices_per_mover():
     engine = SimulationEngine()
 
-    mover_a = TranslationalNewtonianMover([1.0, 2.0, 3.0], [4.0, 5.0, 6.0])
+    mover_a = TranslationalIntegratedMover([1.0, 2.0, 3.0], [4.0, 5.0, 6.0])
 
-    class ExtendedStateMover(NewtonianMover):
+    class ExtendedStateMover(IntegratedMover):
         def __init__(self):
             super().__init__([10.0, 20.0, 30.0, 40.0, 50.0, 60.0, 70.0, 80.0])
 
@@ -188,9 +188,9 @@ def test_simulation_context_exposes_peer_substep_state_for_mixed_dimensions():
     engine = SimulationEngine()
     engine.max_step = 0.05
 
-    leader = TranslationalNewtonianMover([0.0, 0.0, 0.0], [2.0, 0.0, 0.0])
+    leader = TranslationalIntegratedMover([0.0, 0.0, 0.0], [2.0, 0.0, 0.0])
 
-    class ObserverMover(NewtonianMover):
+    class ObserverMover(IntegratedMover):
         def __init__(self, target):
             super().__init__([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, -1.0])
             self.target = target
@@ -222,7 +222,7 @@ def test_engine_integrates_mixed_state_dimensions_with_generic_derivative_api():
     engine = SimulationEngine()
     engine.max_step = 0.1
 
-    class ExtendedStateMover(NewtonianMover):
+    class ExtendedStateMover(IntegratedMover):
         def __init__(self):
             super().__init__([0.0, 0.0, 0.0, 1.0, 2.0, 3.0, 10.0, -5.0])
 
@@ -233,7 +233,7 @@ def test_engine_integrates_mixed_state_dimensions_with_generic_derivative_api():
             derivative[7] = -1.0
             return derivative
 
-    reference_mover = TranslationalNewtonianMover([5.0, 0.0, 0.0], [0.0, 1.0, 0.0])
+    reference_mover = TranslationalIntegratedMover([5.0, 0.0, 0.0], [0.0, 1.0, 0.0])
     extended_mover = ExtendedStateMover()
 
     engine.register_platform(Platform("reference", reference_mover))
@@ -248,7 +248,7 @@ def test_engine_integrates_mixed_state_dimensions_with_generic_derivative_api():
 def test_context_register_rejects_initial_state_size_mismatch():
     engine = SimulationEngine()
 
-    class BadInitialStateMover(NewtonianMover):
+    class BadInitialStateMover(IntegratedMover):
         def __init__(self):
             super().__init__([1.0, 2.0, 3.0, 4.0])
 
@@ -265,7 +265,7 @@ def test_context_register_rejects_initial_state_size_mismatch():
 def test_engine_rejects_derivative_shape_mismatch():
     engine = SimulationEngine()
 
-    class BadDerivativeMover(NewtonianMover):
+    class BadDerivativeMover(IntegratedMover):
         def __init__(self):
             super().__init__([0.0, 0.0, 0.0, 0.0])
 
@@ -277,7 +277,7 @@ def test_engine_rejects_derivative_shape_mismatch():
     with pytest.raises(ValueError, match=r"expected \(4,\)"):
         engine.run(0.1)
 
-def test_analytical_mover_uses_substep_time_during_newtonian_integration():
+def test_analytical_mover_uses_substep_time_during_integrated_mover_evaluation():
     engine = SimulationEngine()
     engine.max_step = 0.1
 
@@ -286,7 +286,7 @@ def test_analytical_mover_uses_substep_time_during_newtonian_integration():
             t = self.t
             return np.array([t, -t, 2.0 * t, 1.0, -1.0, 2.0, 7.0 + t, -3.0 * t])
 
-    class ObserverMover(TranslationalNewtonianMover):
+    class ObserverMover(TranslationalIntegratedMover):
         def __init__(self, target):
             super().__init__([0.0, 0.0, 0.0], [0.0, 0.0, 0.0])
             self.target = target

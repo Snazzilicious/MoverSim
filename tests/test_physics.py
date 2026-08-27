@@ -9,7 +9,7 @@ from mover_sim.math.physics import (
     OMEGA_E
 )
 from mover_sim.core.platform import Platform
-from mover_sim.core.mover import TranslationalNewtonianMover
+from mover_sim.core.mover import TranslationalIntegratedMover
 from mover_sim.core.engine import SimulationEngine
 
 def test_gravity_magnitude_and_direction():
@@ -75,11 +75,11 @@ def test_aerodynamic_drag():
     drag_wind = aerodynamic_drag_force(vel, alt, cd, area, wind_ecef=np.array([50.0, 0.0, 0.0]))
     assert np.isclose(np.linalg.norm(drag_wind), 0.5 * 1.225 * cd * area * (50.0 ** 2), atol=1e-3)
 
-def test_newtonian_mover_with_gravity():
+def test_integrated_mover_with_gravity():
     engine = SimulationEngine()
     engine.max_step = 0.1
 
-    class FallingRockMover(TranslationalNewtonianMover):
+    class FallingRockMover(TranslationalIntegratedMover):
         def compute_derivatives(self, t, pos, vel):
             dpos, dvel = super().compute_derivatives(t, pos, vel)
             return dpos, dvel + gravity(pos)
@@ -101,12 +101,12 @@ def test_newtonian_mover_with_gravity():
     assert np.isclose(mover.position[2], 0.0, atol=1e-7)
 
 
-def test_newtonian_mover_has_no_implicit_gravity():
+def test_integrated_mover_has_no_implicit_gravity():
     engine = SimulationEngine()
     engine.max_step = 0.1
 
     initial_pos = np.array([6378137.0 + 10000.0, 0.0, 0.0])
-    mover = TranslationalNewtonianMover(initial_pos, np.zeros(3))
+    mover = TranslationalIntegratedMover(initial_pos, np.zeros(3))
     platform = Platform("coasting_rock", mover)
     engine.register_platform(platform)
 
@@ -116,11 +116,11 @@ def test_newtonian_mover_has_no_implicit_gravity():
     assert np.allclose(mover.velocity, np.zeros(3))
 
 
-def test_newtonian_subclass_can_use_fully_custom_dynamics_without_gravity():
+def test_integrated_subclass_can_use_fully_custom_dynamics_without_gravity():
     engine = SimulationEngine()
     engine.max_step = 0.05
 
-    class CustomAccelerationMover(TranslationalNewtonianMover):
+    class CustomAccelerationMover(TranslationalIntegratedMover):
         def __init__(self, pos, vel, acceleration):
             super().__init__(pos, vel)
             self.acceleration = np.asarray(acceleration, dtype=float)

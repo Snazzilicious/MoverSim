@@ -1,7 +1,7 @@
 import pytest
 import numpy as np
 from mover_sim.core.platform import Platform
-from mover_sim.core.mover import TranslationalNewtonianMover
+from mover_sim.core.mover import TranslationalIntegratedMover
 from mover_sim.core.controller import Controller
 from mover_sim.core.engine import SimulationEngine
 from mover_sim.models.spline_mover import WaypointMover, SplineMover
@@ -109,11 +109,11 @@ def test_translational_analytical_movers_preserve_public_api():
     assert np.allclose(spline.position, spline_state[:3])
     assert np.allclose(spline.velocity, spline_state[3:])
 
-def test_newtonian_mover_integration():
+def test_integrated_mover_integration():
     engine = SimulationEngine()
     
-    # Newtonian mover with pos=[0,0,0], vel=[10, 20, 30] (constant velocity)
-    mover = TranslationalNewtonianMover([0.0, 0.0, 0.0], [10.0, 20.0, 30.0])
+    # Integrated mover with pos=[0,0,0], vel=[10, 20, 30] (constant velocity)
+    mover = TranslationalIntegratedMover([0.0, 0.0, 0.0], [10.0, 20.0, 30.0])
     platform = Platform("test_vehicle", mover)
     engine.register_platform(platform)
     
@@ -126,8 +126,8 @@ def test_newtonian_mover_integration():
     assert np.isclose(engine.t, 10.0)
 
 
-def test_translational_newtonian_mover_preserves_public_api():
-    mover = TranslationalNewtonianMover([1.0, 2.0, 3.0], [4.0, 5.0, 6.0])
+def test_translational_integrated_mover_preserves_public_api():
+    mover = TranslationalIntegratedMover([1.0, 2.0, 3.0], [4.0, 5.0, 6.0])
 
     assert mover.get_state_dimension() == 6
     assert np.allclose(mover.get_state(), [1.0, 2.0, 3.0, 4.0, 5.0, 6.0])
@@ -137,8 +137,8 @@ def test_translational_newtonian_mover_preserves_public_api():
 def test_controller_execution():
     engine = SimulationEngine()
     
-    # Mock Newtonian mover where velocity can be modified by controller
-    class ControllableMover(TranslationalNewtonianMover):
+    # Mock integrated mover where velocity can be modified by controller
+    class ControllableMover(TranslationalIntegratedMover):
         def __init__(self, pos, vel):
             super().__init__(pos, vel)
             self.acceleration = np.zeros(3)

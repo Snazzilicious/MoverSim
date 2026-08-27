@@ -3,7 +3,7 @@ import itertools
 import numpy as np
 from scipy.integrate import RK45
 from mover_sim.core.broker import EventBroker
-from mover_sim.core.mover import NewtonianMover
+from mover_sim.core.mover import IntegratedMover
 
 class Event:
     """
@@ -67,7 +67,7 @@ class EventScheduler:
 
 class SimulationContext:
     """
-    Owns all Newtonian mover state and provides context-aware access via get_state().
+    Owns all `IntegratedMover` state and provides context-aware access via get_state().
 
     State is maintained in two arrays:
         committed_y:    The last accepted RK45 state, updated after each solver.step().
@@ -85,15 +85,15 @@ class SimulationContext:
         self._integration_y = None
         self._integration_t = None
         self._integrating = False
-        self._index_map = {}  # {NewtonianMover: state slice in committed_y}
+        self._index_map = {}  # {IntegratedMover: state slice in committed_y}
 
     def register(self, mover, initial_state):
         """
         Allocate a slot in the state vector for mover and seed it with initial_state.
-        Called by the engine when a platform containing a NewtonianMover is registered.
+        Called by the engine when a platform containing an IntegratedMover is registered.
 
         Parameters:
-            mover:         A NewtonianMover instance.
+            mover:         An IntegratedMover instance.
             initial_state: Array-like containing the mover's initial state vector.
         """
         initial_state = np.asarray(initial_state, dtype=float)
@@ -129,7 +129,7 @@ class SimulationContext:
         Return the current simulation time.
 
         During ode_fun evaluation this is the current RK45 substep time so analytical
-        movers queried from a Newtonian mover observe a time-consistent snapshot.
+        movers queried from an integrated mover observe a time-consistent snapshot.
         Otherwise it is the last committed simulation time.
         """
         return self._integration_t if self._integrating else self.t
@@ -166,7 +166,6 @@ class SimulationContext:
 
 '''
 ### Comments
-* Better name for NewtonianMover?
 * Plotting
     * On Globe
     * Entire trajectory
@@ -206,14 +205,14 @@ class SimulationEngine:
         """
         Register a platform in the simulation.
 
-        For NewtonianMover platforms, allocates a slot in the SimulationContext state
+        For IntegratedMover platforms, allocates a slot in the SimulationContext state
         vector using the mover's current state as the initial value, then injects the
         context into the mover so it can call get_state() on itself or any other
         registered mover.
         """
         self.platforms[platform.id] = platform
         platform.mover._context = self.context
-        if isinstance(platform.mover, NewtonianMover):
+        if isinstance(platform.mover, IntegratedMover):
             # Seed the context with this mover's initial state and give it a context
             # reference.
             self.context.register(platform.mover, platform.mover.get_initial_state())
@@ -233,13 +232,13 @@ class SimulationEngine:
     def step_continuous(self, t_target):
         """
         Advance continuous state to t_target.
-        Integrates NewtonianMovers using scipy.integrate.RK45.
+        Integrates `IntegratedMover` instances using scipy.integrate.RK45.
         AnalyticalMovers derive state from the current context time on demand.
         """
-        # 1. Collect active Newtonian movers from the context index map
+        # 1. Collect active integrated movers from the context index map
         active_movers = list(self.context._index_map.items())
 
-        # Skip RK45 if there are no Newtonian movers or the time step is too small.
+        # Skip RK45 if there are no integrated movers or the time step is too small.
         # In both cases analytical movers observe the new time through the shared context.
         if not active_movers or t_target - self.t < 1e-9:
             self.t = t_target

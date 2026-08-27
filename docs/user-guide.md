@@ -19,10 +19,10 @@ Typical flow:
 
 ### `SimulationEngine`
 
-The engine owns simulation time, event dispatch, and RK45 integration of Newtonian
-movers.
+The engine owns simulation time, event dispatch, and RK45 integration for
+`IntegratedMover` instances.
 
-The engine state model is arbitrary-dimensional: each Newtonian mover contributes its own
+The engine state model is arbitrary-dimensional: each integrated mover contributes its own
 state slice to the shared solver vector.
 
 Main entry points:
@@ -58,15 +58,15 @@ Convenience properties such as `mover.position` and `mover.velocity` are provide
 translational mover subclasses, not by the generic base classes.
 
 Common mover families:
-- `NewtonianMover`: generic continuous-state base for RK45-integrated movers
+- `IntegratedMover`: generic continuous-state base for RK45-integrated movers
 - `AnalyticalMover`: generic time-driven base for analytical movers
-- `TranslationalNewtonianMover`: position/velocity compatibility mover
+- `TranslationalIntegratedMover`: position/velocity compatibility mover
 - `TranslationalAnalyticalMover`: analytical position/velocity compatibility mover
 - `Mover.t`: current simulation time view, including RK45 substep time during integration
 
-#### `NewtonianMover`
+#### `IntegratedMover`
 
-Use `NewtonianMover` when motion should be integrated from derivatives.
+Use `IntegratedMover` when motion should be integrated from derivatives.
 
 Subclasses implement:
 
@@ -75,10 +75,10 @@ def compute_state_derivative(self, t, state):
     return dstate
 ```
 
-`NewtonianMover` is a generic base. It does not inject gravity, Coriolis, or any other
+`IntegratedMover` is a generic base. It does not inject gravity, Coriolis, or any other
 force model on its own.
 
-If your model is translational, use `TranslationalNewtonianMover` and implement:
+If your model is translational, use `TranslationalIntegratedMover` and implement:
 
 ```python
 def compute_derivatives(self, t, pos, vel):
@@ -215,15 +215,15 @@ Orientation helpers in `mover_sim.math.orientation`:
 
 ## Worked Example
 
-### Constant-Velocity Newtonian Platform
+### Constant-Velocity Integrated Platform
 
 ```python
 from mover_sim.core.engine import SimulationEngine
 from mover_sim.core.platform import Platform
-from mover_sim.core.mover import TranslationalNewtonianMover
+from mover_sim.core.mover import TranslationalIntegratedMover
 
 engine = SimulationEngine()
-vehicle = Platform("vehicle", TranslationalNewtonianMover([0, 0, 0], [10, 20, 30]))
+vehicle = Platform("vehicle", TranslationalIntegratedMover([0, 0, 0], [10, 20, 30]))
 
 engine.register_platform(vehicle)
 engine.run(10.0)

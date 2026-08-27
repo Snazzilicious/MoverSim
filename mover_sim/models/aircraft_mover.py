@@ -1,5 +1,5 @@
 import numpy as np
-from mover_sim.core.mover import NewtonianMover, TranslationalMover, TranslationalNewtonianMover
+from mover_sim.core.mover import IntegratedMover, TranslationalMover, TranslationalIntegratedMover
 from mover_sim.core.controller import Controller
 from mover_sim.math.physics import aerodynamic_drag_force, air_density, coriolis_acceleration, gravity, GM
 from mover_sim.math.coordinates import ecef_to_lla, ecef_to_enu, lla_to_ecef
@@ -11,9 +11,9 @@ from mover_sim.math.orientation import (
     rotate_vector_by_quaternion,
 )
 
-class AircraftMover(TranslationalNewtonianMover):
+class AircraftMover(TranslationalIntegratedMover):
     """
-    A Newtonian mover representing a simplified 6-DOF style aircraft.
+    An integrated mover representing a simplified 6-DOF style aircraft.
     Uses thrust, lift, drag, and gravity to compute forces.
     """
     def __init__(self, initial_position, initial_velocity, mass=10000.0, area=30.0, cd0=0.02, t_max=80000.0):
@@ -90,7 +90,7 @@ class AircraftMover(TranslationalNewtonianMover):
         return dpos, dvel
 
 
-class Aircraft6DOFMover(TranslationalMover, NewtonianMover):
+class Aircraft6DOFMover(TranslationalMover, IntegratedMover):
     """Rigid-body aircraft mover with translational, attitude, and body-rate state."""
 
     def __init__(
