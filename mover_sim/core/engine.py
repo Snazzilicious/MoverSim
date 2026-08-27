@@ -166,9 +166,15 @@ class SimulationContext:
 
 '''
 ### Comments
+* Better name for NewtonianMover?
+* Plotting
+    * On Globe
+    * Entire trajectory
+    * Make movie
 * More examples
     * Rocket w/ stage separation
     * Air Launch cruise missile
+    * Surface launch cruise missile
 * Future features (need not be added yet, but ideally not precluded)
     * despawn platform (e.g. if crashes into ground or something)
     * collision evaluator
