@@ -230,6 +230,22 @@ class AirLaunchedCruiseMissileMothershipMover(Aircraft6DOFMover):
         use_coriolis=True,
         quaternion_normalization_gain=2.0,
     ):
+        """Initialize the rigid-body mothership mover for Scenario 2.
+
+        Args:
+            initial_position: Initial ECEF position vector in meters.
+            initial_velocity: Initial ECEF velocity vector in meters/second.
+            initial_orientation: Optional initial orientation quaternion `[qw, qx, qy, qz]`.
+            initial_body_rates: Optional initial body-rate vector `[p, q, r]` in radians/second.
+            mass: Vehicle mass in kilograms.
+            inertia: Optional 3x3 body inertia matrix.
+            area: Reference aerodynamic area in square meters.
+            cd0: Zero-lift drag coefficient used by the simplified drag model.
+            t_max: Maximum commanded forward thrust in newtons.
+            angular_damping: Optional body-rate damping coefficients.
+            use_coriolis: Whether to include Coriolis acceleration in world-frame dynamics.
+            quaternion_normalization_gain: Stabilization gain used to keep the quaternion normalized.
+        """
         if inertia is None:
             inertia = self.DEFAULT_INERTIA.copy()
         if angular_damping is None:
@@ -306,6 +322,22 @@ class AirLaunchedCruiseMissileMover(Aircraft6DOFMover):
         use_coriolis=True,
         quaternion_normalization_gain=2.0,
     ):
+        """Initialize the released rigid-body missile mover for Scenario 2.
+
+        Args:
+            initial_position: Initial ECEF position vector in meters.
+            initial_velocity: Initial ECEF velocity vector in meters/second.
+            initial_orientation: Optional initial orientation quaternion `[qw, qx, qy, qz]`.
+            initial_body_rates: Optional initial body-rate vector `[p, q, r]` in radians/second.
+            mass: Vehicle mass in kilograms.
+            inertia: Optional 3x3 body inertia matrix.
+            area: Reference aerodynamic area in square meters.
+            cd0: Zero-lift drag coefficient used by the simplified drag model.
+            t_max: Maximum commanded forward thrust in newtons.
+            angular_damping: Optional body-rate damping coefficients.
+            use_coriolis: Whether to include Coriolis acceleration in world-frame dynamics.
+            quaternion_normalization_gain: Stabilization gain used to keep the quaternion normalized.
+        """
         if inertia is None:
             inertia = self.DEFAULT_INERTIA.copy()
         if angular_damping is None:
@@ -372,6 +404,15 @@ class AirLaunchedCruiseMissileMothershipController(Controller):
         rtb_position_ecef,
         update_interval=0.05,
     ):
+        """Initialize the mothership controller for pre-release cruise and RTB phases.
+
+        Args:
+            cruise_speed: Target mothership cruise speed in meters/second.
+            cruise_altitude: Target mothership cruise altitude above the WGS-84 ellipsoid in meters.
+            cruise_heading: Target mothership local-ENU azimuth heading in radians.
+            rtb_position_ecef: ECEF destination for return-to-base guidance in meters.
+            update_interval: Controller update period in seconds.
+        """
         super().__init__(update_interval=update_interval)
         self.cruise_speed = float(cruise_speed)
         self.cruise_altitude = float(cruise_altitude)
@@ -512,6 +553,16 @@ class AirLaunchedCruiseMissileController(Controller):
         drop_duration,
         update_interval=0.05,
     ):
+        """Initialize the released-missile controller for drop, ignition, and cruise.
+
+        Args:
+            release_time: Scenario time at which the missile is released in seconds.
+            cruise_speed: Target missile cruise speed in meters/second.
+            cruise_altitude: Target missile cruise altitude above the WGS-84 ellipsoid in meters.
+            cruise_heading: Target missile local-ENU azimuth heading in radians.
+            drop_duration: Duration of the unpowered post-release drop phase in seconds.
+            update_interval: Controller update period in seconds.
+        """
         super().__init__(update_interval=update_interval)
         self.release_time = float(release_time)
         self.cruise_speed = float(cruise_speed)
@@ -719,7 +770,26 @@ def run_air_launched_cruise_missile_scenario(
     sample_interval,
     output_path,
 ):
-    """Run the air-launched cruise missile scenario."""
+    """Run Scenario 2 and write HDF5 telemetry for the mothership and released missile.
+
+    Args:
+        mothership_initial_position_ecef: Initial mothership ECEF position vector in meters.
+        mothership_cruise_speed: Commanded mothership cruise speed in meters/second.
+        mothership_cruise_altitude: Commanded mothership cruise altitude above the WGS-84 ellipsoid in meters.
+        mothership_cruise_heading: Commanded mothership local-ENU azimuth heading in radians.
+        mothership_rtb_position_ecef: Return-to-base destination in ECEF meters.
+        missile_launch_time: Scenario time at which the missile is released in seconds.
+        missile_cruise_speed: Commanded missile cruise speed in meters/second.
+        missile_cruise_altitude: Commanded missile cruise altitude above the WGS-84 ellipsoid in meters.
+        missile_cruise_heading: Commanded missile local-ENU azimuth heading in radians.
+        missile_drop_duration: Duration of the unpowered drop phase in seconds.
+        t_end: Maximum scenario run time in seconds.
+        sample_interval: HDF5 logging sample interval in seconds.
+        output_path: Filesystem path for the output HDF5 file.
+
+    Returns:
+        A dictionary containing the simulation engine, mothership platform, logger, and output path.
+    """
     mothership_initial_position_ecef = _validate_vector3(
         "mothership_initial_position_ecef",
         mothership_initial_position_ecef,

@@ -170,8 +170,6 @@ class SimulationContext:
     * On Globe
     * Entire trajectory
     * Make movie
-* More examples (need to spec these better)
-    * Rocket w/ stage separation
 * Future features (need not be added yet, but ideally not precluded)
     * despawn platform (e.g. if crashes into ground or something)
     * collision evaluator

@@ -115,6 +115,22 @@ class SurfaceLaunchedCruiseMissileMover(Aircraft6DOFMover):
         use_coriolis=True,
         quaternion_normalization_gain=2.0,
     ):
+        """Initialize a rigid-body cruise missile mover for Scenario 1.
+
+        Args:
+            initial_position: Initial ECEF position vector in meters.
+            initial_velocity: Optional initial ECEF velocity vector in meters/second.
+            initial_orientation: Optional initial orientation quaternion `[qw, qx, qy, qz]`.
+            initial_body_rates: Optional initial body-rate vector `[p, q, r]` in radians/second.
+            mass: Vehicle mass in kilograms.
+            inertia: Optional 3x3 body inertia matrix.
+            area: Reference aerodynamic area in square meters.
+            cd0: Zero-lift drag coefficient used by the simplified drag model.
+            t_max: Maximum commanded forward thrust in newtons.
+            angular_damping: Optional body-rate damping coefficients.
+            use_coriolis: Whether to include Coriolis acceleration in world-frame dynamics.
+            quaternion_normalization_gain: Stabilization gain used to keep the quaternion normalized.
+        """
         if initial_velocity is None:
             initial_velocity = np.zeros(3)
         if inertia is None:
@@ -193,6 +209,17 @@ class SurfaceLaunchedCruiseMissileController(Controller):
         launch_pitch_angle,
         update_interval=0.05,
     ):
+        """Initialize the phase-based Scenario 1 missile guidance controller.
+
+        Args:
+            cruise_speed: Target steady-state cruise speed in meters/second.
+            cruise_altitude: Target cruise altitude above the WGS-84 ellipsoid in meters.
+            cruise_heading: Target local-ENU azimuth heading in radians.
+            boost_duration: Duration of the initial boost phase in seconds.
+            boost_acceleration: Forward boost acceleration command in meters/second^2.
+            launch_pitch_angle: Initial commanded launch pitch angle in radians.
+            update_interval: Controller update period in seconds.
+        """
         super().__init__(update_interval=update_interval)
         self.cruise_speed = float(cruise_speed)
         self.cruise_altitude = float(cruise_altitude)
@@ -377,7 +404,23 @@ def run_surface_launched_cruise_missile_scenario(
     sample_interval,
     output_path,
 ):
-    """Run the surface-launched cruise missile scenario."""
+    """Run Scenario 1 and write HDF5 telemetry for the surface-launched missile.
+
+    Args:
+        initial_position_ecef: Initial missile ECEF position vector in meters.
+        cruise_speed: Commanded cruise speed in meters/second.
+        cruise_altitude: Commanded cruise altitude above the WGS-84 ellipsoid in meters.
+        cruise_heading: Commanded local-ENU azimuth heading in radians.
+        boost_duration: Duration of the boost phase in seconds.
+        boost_acceleration: Forward boost acceleration command in meters/second^2.
+        launch_pitch_angle: Initial launch pitch angle in radians.
+        t_end: Maximum scenario run time in seconds.
+        sample_interval: HDF5 logging sample interval in seconds.
+        output_path: Filesystem path for the output HDF5 file.
+
+    Returns:
+        A dictionary containing the simulation engine, platform, logger, and output path.
+    """
     initial_position_ecef = _validate_vector3("initial_position_ecef", initial_position_ecef)
     cruise_speed = _validate_positive_scalar("cruise_speed", cruise_speed)
     cruise_altitude = _validate_finite_scalar("cruise_altitude", cruise_altitude)

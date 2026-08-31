@@ -412,3 +412,200 @@ Each scenario should be parameterized and wrapped in its own function so we can 
 - Movers to log:
   - the active missile body
   - each separated spent stage
+
+#### Scenario 3 Design Outline
+
+- Scenario function:
+  - `run_ballistic_missile_scenario(...)`
+- Recommended function signature:
+  - `run_ballistic_missile_scenario(initial_position_ecef, target_position_ecef, peak_altitude, stages, t_end, sample_interval, output_path)`
+
+- Primary mover implementation:
+  - represent the active missile body and each spent stage as dedicated 13-state rigid-body movers
+  - use the common rigid-body world-frame force integration pattern already used by the cruise-missile scenarios as the baseline
+  - keep active and spent stages as separate movers after each separation event
+
+- Controller / flight-program implementation:
+  - attach a dedicated controller such as `BallisticMissileController` to the active missile body
+  - attach a passive controller or no-op controller to spent stages after separation
+  - use engine scheduling or controller-triggered events to handle stage burnout and separation
+
+- Flight phases:
+  - active missile body:
+    - `powered_ascent_stage_1`
+    - `stage_1_separation`
+    - `powered_ascent_stage_2` if present
+    - `stage_2_separation` if present
+    - `coast_ballistic`
+    - `terminal_descent`
+    - `impact_terminal`
+  - spent stages:
+    - `separated_ballistic_fall`
+    - `ground_impact_frozen`
+
+- Initial conditions:
+  - initialize the active missile at `initial_position_ecef`
+  - derive initial launch attitude and ascent steering from `target_position_ecef` and `peak_altitude`
+  - initialize translational velocity to exactly zero at scenario start
+  - initialize body rates to zero unless later trim behavior is needed
+  - do not create spent-stage movers at scenario start
+
+- Ascent guidance design:
+  - derive ascent steering automatically from `target_position_ecef` and `peak_altitude`
+  - use those inputs to determine a launch azimuth and an ascent/tilt program rather than exposing a separate pitch program in the first implementation
+  - keep the ascent guidance deterministic and scenario-internal so parameter sweeps remain driven by the existing API
+
+- Stage model design:
+  - `stages` should define a one-stage or two-stage stack with per-stage physical properties
+  - each active stage should contribute its own:
+    - dry mass
+    - propellant mass
+    - burn duration
+    - thrust or thrust-time profile
+    - drag coefficient
+    - reference area
+    - separation delay
+  - active-stage mass properties should update across propellant depletion and separation events
+
+- Powered ascent design:
+  - during each powered stage, apply the stage thrust profile while propagating full rigid-body attitude, body rates, and translational motion
+  - include gravity, drag, and Coriolis effects during ascent
+  - command the vehicle according to the derived ascent steering law rather than a waypoint-style guidance scheme
+
+- Separation design:
+  - at stage burnout, wait for the configured `separation_delay`
+  - publish a stage-separation event
+  - create a new spent-stage mover from the current separated stage state
+  - continue the remaining active stack as the new active missile body if another powered stage remains
+
+- Spent-stage design:
+  - spent stages should continue as independent movers after separation
+  - spent stages should retain full attitude and body-rate propagation under passive rigid-body dynamics during fall
+  - spent stages should not receive powered thrust after separation
+  - spent stages should continue to be tracked until ground impact
+  - after a spent stage hits the ground, freeze its state and continue logging it through the remainder of the scenario
+
+- Coast / ballistic design:
+  - after final-stage burnout and separation, transition the active missile body into a ballistic coast phase
+  - continue propagating the active body under gravity, drag, and passive rigid-body dynamics through coast and descent
+  - do not add terminal guidance in the first implementation unless later required
+
+- Terminal impact handling:
+  - when the active missile body reaches the ground or target area, publish an active-body impact event and terminate the full scenario
+  - no frozen post-impact active-body state is required for Scenario 3
+
+- Guidance/control approach:
+  - keep the active missile body under a phase-based ascent / ballistic controller
+  - keep spent stages under passive rigid-body propagation with no powered guidance
+  - prefer a minimal implementation: one active-body controller, one spent-stage mover type, and event-driven stage separation logic
+
+- Logging/output design:
+  - register one platform for the active missile body at scenario start
+  - dynamically register each spent stage at separation time
+  - attach `HDF5Logger(engine, output_path, sample_interval=sample_interval, include_events=True)`
+  - record at minimum:
+    - full state history for the active missile body and each spent stage
+    - derived position/velocity datasets
+    - LLA datasets
+    - orientation and body-rate datasets
+    - event records for burnout, separation, ballistic transition, spent-stage impact, and active-body impact
+
+- Suggested event topics:
+  - `platform_registered`
+  - `stage_1_burnout`
+  - `stage_1_separation`
+  - `stage_2_burnout`
+  - `stage_2_separation`
+  - `ballistic_coast_start`
+  - `spent_stage_ground_impact`
+  - `active_body_ground_impact`
+
+- Minimal implementation sequence:
+  - create the scenario function and parameter validation
+  - implement the active ballistic missile mover/controller pair
+  - implement a passive spent-stage mover type
+  - derive the ascent steering program from target and peak altitude
+  - add stage burnout and separation scheduling
+  - spawn and register spent stages from the active stage state at separation time
+  - add event publication for burnout, separation, ballistic transition, spent-stage impact, and active-body impact
+  - attach `HDF5Logger` with the Scenario 3 event topics
+  - add one example script and focused tests for stage separation timing, spent-stage spawning, ballistic propagation, and mixed-platform HDF5 output
+
+#### Scenario 3 Implementation Checklist
+
+1. Create a new scenario module and add `run_ballistic_missile_scenario(...)` with the required parameters plus `t_end`, `sample_interval`, and `output_path`.
+2. Add input validation for `initial_position_ecef`, `target_position_ecef`, `peak_altitude`, `stages`, `t_end`, and `sample_interval`.
+3. Add validation for the `stages` structure so it supports only one-stage or two-stage stacks.
+4. Validate that each stage definition contains at minimum:
+   - `dry_mass`
+   - `propellant_mass`
+   - `burn_duration`
+   - `thrust` or a thrust-time profile
+   - `drag_coefficient`
+   - `reference_area`
+   - `separation_delay`
+5. Implement or reuse a helper that derives local ascent azimuth from `initial_position_ecef` toward `target_position_ecef`.
+6. Implement or reuse a helper that converts the derived ascent azimuth and initial ascent pitch into an initial ECEF orientation quaternion.
+7. Implement or reuse a helper that derives an ascent steering / tilt program from `target_position_ecef` and `peak_altitude`.
+8. Choose and document the initial translational speed policy for launch:
+   - use exactly zero translational speed at scenario start
+9. Implement `BallisticMissileMover` for the active missile body using the standard 13-state layout.
+10. Reuse or adapt the existing rigid-body world-frame force model structure so the active missile mover includes gravity, drag, Coriolis, quaternion propagation, and body-rate propagation.
+11. Add active-body mover parameters or internal state needed for stage-aware dynamics, including current mass, active stage index, drag/reference area, thrust behavior, and any angular damping values.
+12. Implement propellant depletion and stage-dependent mass updates for the active missile body during powered flight.
+13. Implement stage-dependent thrust behavior so the active missile body applies the correct thrust or thrust profile for the currently active stage.
+14. Implement `SpentStageMover` using the same 13-state layout for separated stages.
+15. Reuse or adapt the same rigid-body force-model structure for spent stages, but with no powered thrust after separation.
+16. Add spent-stage mover parameters or internal constants needed for passive fall dynamics, including dry mass, drag/reference area, and angular damping values.
+17. Implement `BallisticMissileController` as a phase-based controller attached to the active missile platform.
+18. Add active-body controller phase state for:
+   - `powered_ascent_stage_1`
+   - `stage_1_separation`
+   - `powered_ascent_stage_2` if present
+   - `stage_2_separation` if present
+   - `coast_ballistic`
+   - `terminal_descent`
+   - `impact_terminal`
+19. Implement active-stage ascent guidance that follows the derived ascent steering / tilt program rather than a waypoint follower.
+20. Implement stage-1 burnout detection based on the first stage burn duration or thrust-profile completion.
+21. Publish `stage_1_burnout` when the first powered stage completes.
+22. Implement the stage-1 separation delay and handoff logic using the configured `separation_delay`.
+23. Publish `stage_1_separation` when stage 1 separates.
+24. Derive the spent stage’s initial position, velocity, attitude, and body rates directly from the active missile state at separation.
+25. Construct a `SpentStageMover` from the separated stage state.
+26. Dynamically wrap the spent stage in a `Platform` and register it with the engine at separation time.
+27. If a second active stage exists, update the active missile body to the post-separation stage-2 mass/thrust/drag configuration and transition into `powered_ascent_stage_2`.
+28. Implement stage-2 burnout detection if a second powered stage exists.
+29. Publish `stage_2_burnout` when the second powered stage completes.
+30. Implement the stage-2 separation delay and handoff logic if a second stage exists.
+31. Publish `stage_2_separation` when stage 2 separates.
+32. After final-stage burnout and separation, transition the active missile body into `coast_ballistic`.
+33. Publish `ballistic_coast_start` when the active missile body enters its ballistic coast phase.
+34. Implement passive ballistic propagation for the active missile body during coast and descent.
+35. Define an internal criterion for transitioning from `coast_ballistic` to `terminal_descent` if you want those phases represented separately; otherwise document them as one passive ballistic mode.
+36. Keep spent stages under passive rigid-body propagation with full attitude/body-rate history after separation.
+37. Add ground-impact detection for spent stages using current position/altitude.
+38. On spent-stage ground impact, publish `spent_stage_ground_impact`.
+39. After a spent stage hits the ground, freeze its state and continue logging it through the remainder of the scenario.
+40. Add ground-impact detection for the active missile body using current position/altitude or target-area impact logic.
+41. On active-body impact, publish `active_body_ground_impact` and terminate the full scenario.
+42. Build the scenario assembly flow:
+    - create `SimulationEngine`
+    - construct the active ballistic missile mover and controller
+    - wrap them in a `Platform`
+    - register the active missile platform with the engine
+    - schedule or trigger stage burnout/separation events
+43. Attach `HDF5Logger(engine, output_path, sample_interval=sample_interval, include_events=True)` and pass the Scenario 3 event topic list explicitly.
+44. Ensure the output contains the required datasets for time, full state, position, velocity, LLA, orientation, and body rates for the active missile body and all spawned spent stages.
+45. Add a focused unit test for initial ascent azimuth / orientation derivation from `initial_position_ecef` and `target_position_ecef`.
+46. Add a focused unit test that verifies both the active missile mover and spent-stage mover expose the required 13-element state layout.
+47. Add a controller or scenario test that verifies stage-1 burnout and separation occur at the correct times.
+48. Add a controller or scenario test that verifies a spent stage is dynamically registered at separation time.
+49. Add a controller or integration test that verifies the active missile transitions from powered ascent into ballistic coast after the final burnout.
+50. Add a scenario or integration test that verifies spent stages retain passive rigid-body attitude propagation after separation.
+51. Add a scenario-level test that verifies spent stages freeze after ground impact but remain present in the logged output.
+52. Add a scenario-level test that verifies active-body impact terminates the full scenario and emits `active_body_ground_impact`.
+53. Add a logger test that verifies mixed-platform HDF5 output contains separate trajectory groups for the active missile body and spawned spent stages and includes orientation/body-rate datasets for all of them.
+54. Add a logger test that verifies the Scenario 3 event topics are present in the HDF5 event table.
+55. Add an example script that runs Scenario 3 with representative one-stage and two-stage configurations and writes an HDF5 file.
+56. Run the relevant test subset and confirm the scenario executes end-to-end with valid output.
