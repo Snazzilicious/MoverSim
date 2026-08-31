@@ -1,3 +1,4 @@
+import h5py
 import numpy as np
 
 from mover_sim.core.engine import SimulationEngine
@@ -292,32 +293,31 @@ def test_spent_stage_freezes_after_ground_impact_and_remains_registered():
 def test_ballistic_scenario_stops_on_active_body_ground_impact_and_logs_event(tmp_path):
     output_path = tmp_path / "ballistic_missile.h5"
 
-    result = run_ballistic_missile_scenario(
-        initial_position_ecef=lla_to_ecef(0.0, 0.0, -1.0),
-        target_position_ecef=lla_to_ecef(0.0, 0.01, 0.0),
-        peak_altitude=20000.0,
-        stages=[
-            {
-                "dry_mass": 1000.0,
-                "propellant_mass": 500.0,
-                "burn_duration": 10.0,
-                "thrust": 10000.0,
-                "drag_coefficient": 0.1,
-                "reference_area": 1.0,
-                "separation_delay": 1.0,
-            }
-        ],
-        t_end=10.0,
-        sample_interval=0.1,
-        output_path=output_path,
-    )
+    with h5py.File(output_path, "w") as h5:
+        result = run_ballistic_missile_scenario(
+            initial_position_ecef=lla_to_ecef(0.0, 0.0, -1.0),
+            target_position_ecef=lla_to_ecef(0.0, 0.01, 0.0),
+            peak_altitude=20000.0,
+            stages=[
+                {
+                    "dry_mass": 1000.0,
+                    "propellant_mass": 500.0,
+                    "burn_duration": 10.0,
+                    "thrust": 10000.0,
+                    "drag_coefficient": 0.1,
+                    "reference_area": 1.0,
+                    "separation_delay": 1.0,
+                }
+            ],
+            t_end=10.0,
+            sample_interval=0.1,
+            output_group=h5.create_group("run"),
+        )
 
     assert result["engine"].t < 10.0
 
-    import h5py
-
     with h5py.File(output_path, "r") as h5:
-        topics = [topic.decode("utf-8") if isinstance(topic, bytes) else topic for topic in h5["events"]["topic"][:]]
+        topics = [topic.decode("utf-8") if isinstance(topic, bytes) else topic for topic in h5["run"]["events"]["topic"][:]]
         assert "active_body_ground_impact" in topics
 
 
@@ -360,26 +360,25 @@ def test_ballistic_hdf5_output_contains_active_and_spent_stage_groups(tmp_path):
     engine.register_platform(active_platform)
     _spawn_spent_stage(engine, active_platform, stage, "spent_stage_1")
 
-    HDF5Logger(
-        engine,
-        str(output_path),
-        sample_interval=0.1,
-        include_state=True,
-        include_lla=True,
-        include_events=True,
-        event_topics=SCENARIO_EVENT_TOPICS,
-    )
-    engine.run(0.1)
-
-    import h5py
+    with h5py.File(output_path, "w") as h5:
+        HDF5Logger(
+            engine,
+            h5.create_group("run"),
+            sample_interval=0.1,
+            include_state=True,
+            include_lla=True,
+            include_events=True,
+            event_topics=SCENARIO_EVENT_TOPICS,
+        )
+        engine.run(0.1)
 
     with h5py.File(output_path, "r") as h5:
-        assert "trajectories" in h5
-        assert "ballistic_missile" in h5["trajectories"]
-        assert "spent_stage_1" in h5["trajectories"]
+        assert "trajectories" in h5["run"]
+        assert "ballistic_missile" in h5["run"]["trajectories"]
+        assert "spent_stage_1" in h5["run"]["trajectories"]
 
         for group_name in ("ballistic_missile", "spent_stage_1"):
-            group = h5["trajectories"][group_name]
+            group = h5["run"]["trajectories"][group_name]
             assert "orientation" in group
             assert "body_rates" in group
             assert group["orientation"].shape[1] == 4
@@ -425,29 +424,28 @@ def test_ballistic_hdf5_event_table_contains_scenario_topics(tmp_path):
     engine.register_platform(active_platform)
     spent_platform = _spawn_spent_stage(engine, active_platform, stage, "spent_stage_1")
 
-    HDF5Logger(
-        engine,
-        str(output_path),
-        sample_interval=0.1,
-        include_state=True,
-        include_lla=True,
-        include_events=True,
-        event_topics=SCENARIO_EVENT_TOPICS,
-    )
+    with h5py.File(output_path, "w") as h5:
+        HDF5Logger(
+            engine,
+            h5.create_group("run"),
+            sample_interval=0.1,
+            include_state=True,
+            include_lla=True,
+            include_events=True,
+            event_topics=SCENARIO_EVENT_TOPICS,
+        )
 
-    engine.broker.publish("platform_registered", active_platform)
-    engine.broker.publish("platform_registered", spent_platform)
-    engine.broker.publish("stage_1_burnout", active_platform)
-    engine.broker.publish("stage_1_separation", active_platform)
-    engine.broker.publish("ballistic_coast_start", active_platform)
-    engine.broker.publish("spent_stage_ground_impact", spent_platform)
-    engine.broker.publish("active_body_ground_impact", active_platform)
-    engine.run(0.1)
-
-    import h5py
+        engine.broker.publish("platform_registered", active_platform)
+        engine.broker.publish("platform_registered", spent_platform)
+        engine.broker.publish("stage_1_burnout", active_platform)
+        engine.broker.publish("stage_1_separation", active_platform)
+        engine.broker.publish("ballistic_coast_start", active_platform)
+        engine.broker.publish("spent_stage_ground_impact", spent_platform)
+        engine.broker.publish("active_body_ground_impact", active_platform)
+        engine.run(0.1)
 
     with h5py.File(output_path, "r") as h5:
-        topics = [topic.decode("utf-8") if isinstance(topic, bytes) else topic for topic in h5["events"]["topic"][:]]
+        topics = [topic.decode("utf-8") if isinstance(topic, bytes) else topic for topic in h5["run"]["events"]["topic"][:]]
         assert "platform_registered" in topics
         assert "stage_1_burnout" in topics
         assert "stage_1_separation" in topics

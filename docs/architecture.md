@@ -208,6 +208,8 @@ Optional event logging is written to a separate CSV file.
 
 `HDF5Logger` is the structured archive format.
 
+It writes beneath a caller-provided HDF5 group that acts as the root for one run.
+
 It stores:
 - `/trajectories/<platform_id>/time`
 - `/trajectories/<platform_id>/state`
@@ -218,7 +220,7 @@ It stores:
   - `orientation`
   - `body_rates`
 - `/events/*` datasets when event logging is enabled
-- `/metadata` attributes describing the file schema
+- `/metadata` attributes describing the run-group schema
 
 Per-platform trajectory groups are created lazily on first sample. Datasets are appendable,
 chunked, and optionally compressed.

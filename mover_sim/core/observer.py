@@ -371,7 +371,7 @@ class HDF5Logger(BaseTrajectoryLogger):
     def __init__(
         self,
         engine,
-        filepath,
+        group,
         sample_interval=1.0,
         include_events=True,
         batch_size=100,
@@ -384,7 +384,7 @@ class HDF5Logger(BaseTrajectoryLogger):
         """
         Parameters:
             engine: The SimulationEngine instance.
-            filepath: Path to the output HDF5 file.
+            group: Root `h5py.Group` beneath which trajectory and event datasets are created.
             sample_interval: Minimum time interval (seconds) between logs.
             include_events: If True, write selected broker events to the HDF5 file.
             batch_size: Number of buffered records to accumulate before writing.
@@ -399,11 +399,13 @@ class HDF5Logger(BaseTrajectoryLogger):
         except ImportError as exc:
             raise ImportError("HDF5Logger requires h5py to be installed") from exc
 
+        if not isinstance(group, h5py.Group):
+            raise ValueError("group must be an h5py.Group")
+
         self.h5py = h5py
-        self.filepath = filepath
+        self.group = group
         self.compression = compression
         self.compression_level = compression_level
-        self.file = None
         self.trajectories_group = None
         self.events_group = None
         self.metadata_group = None
@@ -425,16 +427,18 @@ class HDF5Logger(BaseTrajectoryLogger):
         return kwargs
 
     def _open(self):
-        self.file = self.h5py.File(self.filepath, mode="w")
-        self.trajectories_group = self.file.create_group("trajectories")
-        self.metadata_group = self.file.create_group("metadata")
+        if "trajectories" in self.group or "events" in self.group:
+            raise ValueError("output_group already contains logger-managed data")
+
+        self.trajectories_group = self.group.create_group("trajectories")
+        self.metadata_group = self.group.create_group("metadata")
         self.metadata_group.attrs["sample_interval"] = self.sample_interval
         self.metadata_group.attrs["created_utc"] = datetime.now(timezone.utc).isoformat()
         self.metadata_group.attrs["mover_sim_version"] = "unknown"
         self.metadata_group.attrs["schema_version"] = "1"
 
         if self.include_events:
-            self.events_group = self.file.create_group("events")
+            self.events_group = self.group.create_group("events")
             string_dtype = self.h5py.string_dtype(encoding="utf-8")
             kwargs = self._dataset_kwargs()
             self.events_group.create_dataset("time", shape=(0,), maxshape=(None,), dtype=np.float64, **kwargs)
@@ -531,10 +535,7 @@ class HDF5Logger(BaseTrajectoryLogger):
         self._append_dataset(self.events_group["payload_json"], payloads)
 
     def _close(self):
-        if self.file:
-            self.file.flush()
-            self.file.close()
-            self.file = None
-            self.trajectories_group = None
-            self.events_group = None
-            self.metadata_group = None
+        self.group.file.flush()
+        self.trajectories_group = None
+        self.events_group = None
+        self.metadata_group = None

@@ -1,13 +1,12 @@
 """Scenario 3: ballistic missile."""
 
-from pathlib import Path
-
 import numpy as np
 
 from mover_sim.core.controller import Controller
 from mover_sim.core.engine import SimulationEngine
 from mover_sim.core.observer import HDF5Logger
 from mover_sim.core.platform import Platform
+from mover_sim.hdf5_utils import validate_output_group
 from mover_sim.math.coordinates import ecef_to_lla
 from mover_sim.math.orientation import (
     build_aircraft_body_axes,
@@ -65,13 +64,6 @@ def _validate_finite_scalar(name, value):
     if not np.isfinite(scalar):
         raise ValueError(f"{name} must be finite")
     return scalar
-
-
-def _validate_output_path(output_path):
-    path = Path(output_path)
-    if not str(path):
-        raise ValueError("output_path must not be empty")
-    return path
 
 
 def _validate_stages(name, value):
@@ -680,7 +672,7 @@ def run_ballistic_missile_scenario(
     stages,
     t_end,
     sample_interval,
-    output_path,
+    output_group,
 ):
     """Run Scenario 3 and write HDF5 telemetry for the active missile and spent stages.
 
@@ -691,10 +683,10 @@ def run_ballistic_missile_scenario(
         stages: One-stage or two-stage stack definition containing the physical parameters for each stage.
         t_end: Maximum scenario run time in seconds.
         sample_interval: HDF5 logging sample interval in seconds.
-        output_path: Filesystem path for the output HDF5 file.
+        output_group: Caller-created `h5py.Group` used as the root for this scenario run.
 
     Returns:
-        A dictionary containing the simulation engine, active platform, logger, and output path.
+        A dictionary containing the simulation engine, active platform, logger, and output group.
     """
     initial_position_ecef = _validate_vector3("initial_position_ecef", initial_position_ecef)
     target_position_ecef = _validate_vector3("target_position_ecef", target_position_ecef)
@@ -703,9 +695,7 @@ def run_ballistic_missile_scenario(
     stages = _validate_stage_definitions(stages)
     t_end = _validate_positive_scalar("t_end", t_end)
     sample_interval = _validate_positive_scalar("sample_interval", sample_interval)
-    output_path = _validate_output_path(output_path)
-
-    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_group = validate_output_group(output_group)
 
     ascent_program = _derive_ascent_program(
         initial_position_ecef,
@@ -738,7 +728,7 @@ def run_ballistic_missile_scenario(
 
     logger = HDF5Logger(
         engine,
-        str(output_path),
+        output_group,
         sample_interval=sample_interval,
         include_state=True,
         include_lla=True,
@@ -752,5 +742,5 @@ def run_ballistic_missile_scenario(
         "engine": engine,
         "platform": platform,
         "logger": logger,
-        "output_path": output_path,
+        "output_group": output_group,
     }

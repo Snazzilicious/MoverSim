@@ -127,14 +127,14 @@ def test_hdf5_logger_creates_per_platform_datasets_and_flushes_final_batch(tmp_p
     engine.register_platform(platform)
 
     log_file = tmp_path / "telemetry.h5"
-    HDF5Logger(engine, str(log_file), sample_interval=0.5, batch_size=100)
-
-    engine.run(1.0)
+    with h5py.File(log_file, "w") as h5:
+        HDF5Logger(engine, h5.create_group("run"), sample_interval=0.5, batch_size=100)
+        engine.run(1.0)
 
     with h5py.File(log_file, "r") as h5:
-        assert "trajectories" in h5
-        assert "point" in h5["trajectories"]
-        group = h5["trajectories"]["point"]
+        assert "trajectories" in h5["run"]
+        assert "point" in h5["run"]["trajectories"]
+        group = h5["run"]["trajectories"]["point"]
         assert group.attrs["state_dim"] == 6
         assert group["time"].shape[0] >= 2
         assert group["state"].shape[0] == group["time"].shape[0]
@@ -151,14 +151,14 @@ def test_hdf5_logger_supports_mixed_dimensions_and_dynamic_registration(tmp_path
     rigid_platform = _make_6dof_platform("rigid")
 
     log_file = tmp_path / "telemetry.h5"
-    HDF5Logger(engine, str(log_file), sample_interval=0.5, batch_size=2)
-
-    engine.schedule(0.5, lambda eng: eng.register_platform(rigid_platform), "spawn_rigid")
-    engine.run(1.5)
+    with h5py.File(log_file, "w") as h5:
+        HDF5Logger(engine, h5.create_group("run"), sample_interval=0.5, batch_size=2)
+        engine.schedule(0.5, lambda eng: eng.register_platform(rigid_platform), "spawn_rigid")
+        engine.run(1.5)
 
     with h5py.File(log_file, "r") as h5:
-        point = h5["trajectories"]["point"]
-        rigid = h5["trajectories"]["rigid"]
+        point = h5["run"]["trajectories"]["point"]
+        rigid = h5["run"]["trajectories"]["rigid"]
 
         assert point.attrs["state_dim"] == 6
         assert rigid.attrs["state_dim"] == 13
@@ -177,14 +177,14 @@ def test_hdf5_logger_writes_event_table(tmp_path):
     rigid_platform = _make_6dof_platform("rigid")
 
     log_file = tmp_path / "telemetry.h5"
-    HDF5Logger(engine, str(log_file), sample_interval=0.5, include_events=True, batch_size=2)
-
-    engine.schedule(0.5, lambda eng: eng.register_platform(rigid_platform), "spawn_rigid")
-    engine.run(1.0)
+    with h5py.File(log_file, "w") as h5:
+        HDF5Logger(engine, h5.create_group("run"), sample_interval=0.5, include_events=True, batch_size=2)
+        engine.schedule(0.5, lambda eng: eng.register_platform(rigid_platform), "spawn_rigid")
+        engine.run(1.0)
 
     with h5py.File(log_file, "r") as h5:
-        assert "events" in h5
-        events = h5["events"]
+        assert "events" in h5["run"]
+        events = h5["run"]["events"]
         assert events["time"].shape[0] >= 1
         topics = [topic.decode("utf-8") if isinstance(topic, bytes) else topic for topic in events["topic"][:]]
         platform_ids = [pid.decode("utf-8") if isinstance(pid, bytes) else pid for pid in events["platform_id"][:]]
@@ -198,14 +198,52 @@ def test_hdf5_logger_records_orientation_and_body_rates_for_analytical_aircraft(
     engine.register_platform(platform)
 
     log_file = tmp_path / "telemetry.h5"
-    HDF5Logger(engine, str(log_file), sample_interval=0.5, batch_size=10)
-
-    engine.run(1.0)
+    with h5py.File(log_file, "w") as h5:
+        HDF5Logger(engine, h5.create_group("run"), sample_interval=0.5, batch_size=10)
+        engine.run(1.0)
 
     with h5py.File(log_file, "r") as h5:
-        group = h5["trajectories"]["spline"]
+        group = h5["run"]["trajectories"]["spline"]
         assert group.attrs["state_dim"] == 13
         assert "orientation" in group
         assert "body_rates" in group
         assert group["orientation"].shape[1] == 4
         assert group["body_rates"].shape[1] == 3
+
+
+def test_hdf5_logger_writes_beneath_provided_subgroup(tmp_path):
+    engine = SimulationEngine()
+    engine.max_step = 0.25
+    engine.register_platform(_make_point_mass_platform("point"))
+
+    log_file = tmp_path / "telemetry.h5"
+    with h5py.File(log_file, "w") as h5:
+        parent = h5.create_group("runs")
+        run_group = parent.create_group("run_001")
+        HDF5Logger(engine, run_group, sample_interval=0.5, batch_size=10)
+        engine.run(0.5)
+
+    with h5py.File(log_file, "r") as h5:
+        assert "runs" in h5
+        assert "run_001" in h5["runs"]
+        assert "trajectories" in h5["runs"]["run_001"]
+        assert "metadata" in h5["runs"]["run_001"]
+        assert "point" in h5["runs"]["run_001"]["trajectories"]
+
+
+def test_hdf5_logger_rejects_reused_group_with_logger_managed_children(tmp_path):
+    engine = SimulationEngine()
+    engine.register_platform(_make_point_mass_platform("point"))
+
+    log_file = tmp_path / "telemetry.h5"
+    with h5py.File(log_file, "w") as h5:
+        run_group = h5.create_group("run")
+        run_group.create_group("trajectories")
+
+        try:
+            HDF5Logger(engine, run_group, sample_interval=0.5, batch_size=10)
+            engine.broker.publish("sim_start", 0.0)
+        except ValueError as exc:
+            assert str(exc) == "output_group already contains logger-managed data"
+        else:
+            raise AssertionError("Expected HDF5Logger to reject a reused output group")

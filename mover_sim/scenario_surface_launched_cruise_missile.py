@@ -1,13 +1,12 @@
 """Scenario 1: surface-launched cruise missile."""
 
-from pathlib import Path
-
 import numpy as np
 
 from mover_sim.core.engine import SimulationEngine
 from mover_sim.core.observer import HDF5Logger
 from mover_sim.core.platform import Platform
 from mover_sim.core.controller import Controller
+from mover_sim.hdf5_utils import validate_output_group
 from mover_sim.math.coordinates import ecef_to_lla
 from mover_sim.math.orientation import (
     build_aircraft_body_axes,
@@ -53,13 +52,6 @@ def _validate_finite_scalar(name, value):
     if not np.isfinite(scalar):
         raise ValueError(f"{name} must be finite")
     return scalar
-
-
-def _validate_output_path(output_path):
-    path = Path(output_path)
-    if not str(path):
-        raise ValueError("output_path must not be empty")
-    return path
 
 
 def _initial_orientation_from_heading_pitch(initial_position_ecef, heading, pitch_angle):
@@ -402,7 +394,7 @@ def run_surface_launched_cruise_missile_scenario(
     launch_pitch_angle,
     t_end,
     sample_interval,
-    output_path,
+    output_group,
 ):
     """Run Scenario 1 and write HDF5 telemetry for the surface-launched missile.
 
@@ -416,10 +408,10 @@ def run_surface_launched_cruise_missile_scenario(
         launch_pitch_angle: Initial launch pitch angle in radians.
         t_end: Maximum scenario run time in seconds.
         sample_interval: HDF5 logging sample interval in seconds.
-        output_path: Filesystem path for the output HDF5 file.
+        output_group: Caller-created `h5py.Group` used as the root for this scenario run.
 
     Returns:
-        A dictionary containing the simulation engine, platform, logger, and output path.
+        A dictionary containing the simulation engine, platform, logger, and output group.
     """
     initial_position_ecef = _validate_vector3("initial_position_ecef", initial_position_ecef)
     cruise_speed = _validate_positive_scalar("cruise_speed", cruise_speed)
@@ -430,8 +422,7 @@ def run_surface_launched_cruise_missile_scenario(
     launch_pitch_angle = _validate_finite_scalar("launch_pitch_angle", launch_pitch_angle)
     t_end = _validate_positive_scalar("t_end", t_end)
     sample_interval = _validate_positive_scalar("sample_interval", sample_interval)
-    output_path = _validate_output_path(output_path)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_group = validate_output_group(output_group)
 
     initial_orientation = _initial_orientation_from_heading_pitch(
         initial_position_ecef,
@@ -461,7 +452,7 @@ def run_surface_launched_cruise_missile_scenario(
 
     logger = HDF5Logger(
         engine,
-        str(output_path),
+        output_group,
         sample_interval=sample_interval,
         include_state=True,
         include_lla=True,
@@ -475,5 +466,5 @@ def run_surface_launched_cruise_missile_scenario(
         "engine": engine,
         "platform": platform,
         "logger": logger,
-        "output_path": output_path,
+        "output_group": output_group,
     }

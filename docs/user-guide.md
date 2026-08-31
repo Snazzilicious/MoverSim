@@ -244,17 +244,20 @@ Rigid-body aircraft state layout:
 [x, y, z, vx, vy, vz, qw, qx, qy, qz, p, q, r]
 ```
 
-### CSV Logging
+### Logging
 
 ```python
+import h5py
+
 from mover_sim.core.observer import CSVLogger, HDF5Logger
 
 logger = CSVLogger(engine, "output/telemetry.csv", log_interval=0.5)
-h5_logger = HDF5Logger(engine, "output/telemetry.h5", sample_interval=0.5)
-engine.run(30.0)
+with h5py.File("output/telemetry.h5", "w") as h5:
+    h5_logger = HDF5Logger(engine, h5.create_group("run_001"), sample_interval=0.5)
+    engine.run(30.0)
 ```
 
-`CSVLogger` accepts optional event logging:
+`CSVLogger` accepts optional external event logging:
 
 ```python
 CSVLogger(

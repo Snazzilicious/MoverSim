@@ -1,3 +1,4 @@
+import h5py
 import numpy as np
 
 from mover_sim.core.engine import SimulationEngine
@@ -239,60 +240,58 @@ def test_air_launched_mothership_switches_to_rtb_and_reaches_hold_state():
 def test_air_launched_scenario_stops_on_missile_ground_impact_and_logs_event(tmp_path):
     output_path = tmp_path / "air_launched_cruise_missile.h5"
 
-    result = run_air_launched_cruise_missile_scenario(
-        mothership_initial_position_ecef=lla_to_ecef(0.0, 0.0, 20.0),
-        mothership_cruise_speed=200.0,
-        mothership_cruise_altitude=20.0,
-        mothership_cruise_heading=0.0,
-        mothership_rtb_position_ecef=lla_to_ecef(0.0, 0.0, 20.0),
-        missile_launch_time=0.1,
-        missile_cruise_speed=250.0,
-        missile_cruise_altitude=500.0,
-        missile_cruise_heading=0.0,
-        missile_drop_duration=0.0,
-        t_end=10.0,
-        sample_interval=0.1,
-        output_path=output_path,
-    )
+    with h5py.File(output_path, "w") as h5:
+        result = run_air_launched_cruise_missile_scenario(
+            mothership_initial_position_ecef=lla_to_ecef(0.0, 0.0, 20.0),
+            mothership_cruise_speed=200.0,
+            mothership_cruise_altitude=20.0,
+            mothership_cruise_heading=0.0,
+            mothership_rtb_position_ecef=lla_to_ecef(0.0, 0.0, 20.0),
+            missile_launch_time=0.1,
+            missile_cruise_speed=250.0,
+            missile_cruise_altitude=500.0,
+            missile_cruise_heading=0.0,
+            missile_drop_duration=0.0,
+            t_end=10.0,
+            sample_interval=0.1,
+            output_group=h5.create_group("run"),
+        )
 
     assert result["engine"].t < 10.0
 
-    import h5py
-
     with h5py.File(output_path, "r") as h5:
-        assert "events" in h5
-        topics = [topic.decode("utf-8") if isinstance(topic, bytes) else topic for topic in h5["events"]["topic"][:]]
+        assert "events" in h5["run"]
+        topics = [topic.decode("utf-8") if isinstance(topic, bytes) else topic for topic in h5["run"]["events"]["topic"][:]]
         assert "missile_ground_impact" in topics
 
 
 def test_air_launched_hdf5_output_contains_mothership_and_missile_trajectory_groups(tmp_path):
     output_path = tmp_path / "air_launched_cruise_missile_groups.h5"
 
-    run_air_launched_cruise_missile_scenario(
-        mothership_initial_position_ecef=lla_to_ecef(0.0, 0.0, 1500.0),
-        mothership_cruise_speed=200.0,
-        mothership_cruise_altitude=1500.0,
-        mothership_cruise_heading=0.0,
-        mothership_rtb_position_ecef=lla_to_ecef(0.0, 0.001, 1500.0),
-        missile_launch_time=0.1,
-        missile_cruise_speed=250.0,
-        missile_cruise_altitude=1200.0,
-        missile_cruise_heading=0.0,
-        missile_drop_duration=0.1,
-        t_end=1.0,
-        sample_interval=0.1,
-        output_path=output_path,
-    )
-
-    import h5py
+    with h5py.File(output_path, "w") as h5:
+        run_air_launched_cruise_missile_scenario(
+            mothership_initial_position_ecef=lla_to_ecef(0.0, 0.0, 1500.0),
+            mothership_cruise_speed=200.0,
+            mothership_cruise_altitude=1500.0,
+            mothership_cruise_heading=0.0,
+            mothership_rtb_position_ecef=lla_to_ecef(0.0, 0.001, 1500.0),
+            missile_launch_time=0.1,
+            missile_cruise_speed=250.0,
+            missile_cruise_altitude=1200.0,
+            missile_cruise_heading=0.0,
+            missile_drop_duration=0.1,
+            t_end=1.0,
+            sample_interval=0.1,
+            output_group=h5.create_group("run"),
+        )
 
     with h5py.File(output_path, "r") as h5:
-        assert "trajectories" in h5
-        assert "mothership" in h5["trajectories"]
-        assert "released_missile" in h5["trajectories"]
+        assert "trajectories" in h5["run"]
+        assert "mothership" in h5["run"]["trajectories"]
+        assert "released_missile" in h5["run"]["trajectories"]
 
-        mothership_group = h5["trajectories"]["mothership"]
-        missile_group = h5["trajectories"]["released_missile"]
+        mothership_group = h5["run"]["trajectories"]["mothership"]
+        missile_group = h5["run"]["trajectories"]["released_missile"]
 
         for group in (mothership_group, missile_group):
             assert "orientation" in group
@@ -304,26 +303,25 @@ def test_air_launched_hdf5_output_contains_mothership_and_missile_trajectory_gro
 def test_air_launched_hdf5_event_table_contains_scenario_topics(tmp_path):
     output_path = tmp_path / "air_launched_cruise_missile_events.h5"
 
-    run_air_launched_cruise_missile_scenario(
-        mothership_initial_position_ecef=lla_to_ecef(0.0, 0.0, 20.0),
-        mothership_cruise_speed=200.0,
-        mothership_cruise_altitude=20.0,
-        mothership_cruise_heading=0.0,
-        mothership_rtb_position_ecef=lla_to_ecef(0.0, 0.0, 20.0),
-        missile_launch_time=0.1,
-        missile_cruise_speed=250.0,
-        missile_cruise_altitude=500.0,
-        missile_cruise_heading=0.0,
-        missile_drop_duration=0.0,
-        t_end=10.0,
-        sample_interval=0.1,
-        output_path=output_path,
-    )
-
-    import h5py
+    with h5py.File(output_path, "w") as h5:
+        run_air_launched_cruise_missile_scenario(
+            mothership_initial_position_ecef=lla_to_ecef(0.0, 0.0, 20.0),
+            mothership_cruise_speed=200.0,
+            mothership_cruise_altitude=20.0,
+            mothership_cruise_heading=0.0,
+            mothership_rtb_position_ecef=lla_to_ecef(0.0, 0.0, 20.0),
+            missile_launch_time=0.1,
+            missile_cruise_speed=250.0,
+            missile_cruise_altitude=500.0,
+            missile_cruise_heading=0.0,
+            missile_drop_duration=0.0,
+            t_end=10.0,
+            sample_interval=0.1,
+            output_group=h5.create_group("run"),
+        )
 
     with h5py.File(output_path, "r") as h5:
-        topics = [topic.decode("utf-8") if isinstance(topic, bytes) else topic for topic in h5["events"]["topic"][:]]
+        topics = [topic.decode("utf-8") if isinstance(topic, bytes) else topic for topic in h5["run"]["events"]["topic"][:]]
         assert "platform_registered" in topics
         assert "missile_release" in topics
         assert "missile_drop_start" in topics

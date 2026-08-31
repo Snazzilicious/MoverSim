@@ -128,47 +128,140 @@ def test_surface_launched_cruise_missile_transition_guidance_reduces_heading_and
 def test_surface_launched_cruise_missile_scenario_stops_on_ground_impact_and_logs_event(tmp_path):
     output_path = tmp_path / "surface_cruise_missile.h5"
 
-    result = run_surface_launched_cruise_missile_scenario(
-        initial_position_ecef=lla_to_ecef(0.0, 0.0, 10.0),
-        cruise_speed=250.0,
-        cruise_altitude=1000.0,
-        cruise_heading=0.0,
-        boost_duration=5.0,
-        boost_acceleration=30.0,
-        launch_pitch_angle=-np.pi / 2.0,
-        t_end=10.0,
-        sample_interval=0.1,
-        output_path=output_path,
-    )
+    with h5py.File(output_path, "w") as h5:
+        result = run_surface_launched_cruise_missile_scenario(
+            initial_position_ecef=lla_to_ecef(0.0, 0.0, 10.0),
+            cruise_speed=250.0,
+            cruise_altitude=1000.0,
+            cruise_heading=0.0,
+            boost_duration=5.0,
+            boost_acceleration=30.0,
+            launch_pitch_angle=-np.pi / 2.0,
+            t_end=10.0,
+            sample_interval=0.1,
+            output_group=h5.create_group("run"),
+        )
 
     assert result["engine"].t < 10.0
 
     with h5py.File(output_path, "r") as h5:
-        assert "events" in h5
-        topics = [topic.decode("utf-8") if isinstance(topic, bytes) else topic for topic in h5["events"]["topic"][:]]
+        assert "events" in h5["run"]
+        topics = [topic.decode("utf-8") if isinstance(topic, bytes) else topic for topic in h5["run"]["events"]["topic"][:]]
         assert "ground_impact" in topics
 
 
 def test_surface_launched_cruise_missile_hdf5_output_contains_orientation_and_body_rates(tmp_path):
     output_path = tmp_path / "surface_cruise_missile_orientation.h5"
 
-    run_surface_launched_cruise_missile_scenario(
-        initial_position_ecef=lla_to_ecef(0.0, 0.0, 1000.0),
-        cruise_speed=250.0,
-        cruise_altitude=1200.0,
-        cruise_heading=0.0,
-        boost_duration=0.5,
-        boost_acceleration=20.0,
-        launch_pitch_angle=np.radians(10.0),
-        t_end=1.0,
-        sample_interval=0.1,
-        output_path=output_path,
-    )
+    with h5py.File(output_path, "w") as h5:
+        run_surface_launched_cruise_missile_scenario(
+            initial_position_ecef=lla_to_ecef(0.0, 0.0, 1000.0),
+            cruise_speed=250.0,
+            cruise_altitude=1200.0,
+            cruise_heading=0.0,
+            boost_duration=0.5,
+            boost_acceleration=20.0,
+            launch_pitch_angle=np.radians(10.0),
+            t_end=1.0,
+            sample_interval=0.1,
+            output_group=h5.create_group("run"),
+        )
 
     with h5py.File(output_path, "r") as h5:
-        assert "trajectories" in h5
-        group = h5["trajectories"]["surface_cruise_missile"]
+        assert "trajectories" in h5["run"]
+        group = h5["run"]["trajectories"]["surface_cruise_missile"]
         assert "orientation" in group
         assert "body_rates" in group
         assert group["orientation"].shape[1] == 4
         assert group["body_rates"].shape[1] == 3
+
+
+def test_surface_launched_cruise_missile_rejects_non_group_output_target():
+    try:
+        run_surface_launched_cruise_missile_scenario(
+            initial_position_ecef=lla_to_ecef(0.0, 0.0, 1000.0),
+            cruise_speed=250.0,
+            cruise_altitude=1200.0,
+            cruise_heading=0.0,
+            boost_duration=0.5,
+            boost_acceleration=20.0,
+            launch_pitch_angle=np.radians(10.0),
+            t_end=1.0,
+            sample_interval=0.1,
+            output_group="not-a-group",
+        )
+    except ValueError as exc:
+        assert str(exc) == "output_group must be an h5py.Group"
+    else:
+        raise AssertionError("Expected a ValueError for non-group output target")
+
+
+def test_surface_launched_cruise_missile_rejects_reused_group(tmp_path):
+    output_path = tmp_path / "surface_reuse.h5"
+
+    with h5py.File(output_path, "w") as h5:
+        group = h5.create_group("run")
+        run_surface_launched_cruise_missile_scenario(
+            initial_position_ecef=lla_to_ecef(0.0, 0.0, 1000.0),
+            cruise_speed=250.0,
+            cruise_altitude=1200.0,
+            cruise_heading=0.0,
+            boost_duration=0.5,
+            boost_acceleration=20.0,
+            launch_pitch_angle=np.radians(10.0),
+            t_end=0.1,
+            sample_interval=0.1,
+            output_group=group,
+        )
+
+        try:
+            run_surface_launched_cruise_missile_scenario(
+                initial_position_ecef=lla_to_ecef(0.0, 0.0, 1000.0),
+                cruise_speed=250.0,
+                cruise_altitude=1200.0,
+                cruise_heading=0.0,
+                boost_duration=0.5,
+                boost_acceleration=20.0,
+                launch_pitch_angle=np.radians(10.0),
+                t_end=0.1,
+                sample_interval=0.1,
+                output_group=group,
+            )
+        except ValueError as exc:
+            assert str(exc) == "output_group already contains logger-managed data"
+        else:
+            raise AssertionError("Expected reused output group to fail")
+
+
+def test_surface_launched_cruise_missile_supports_sibling_groups_in_one_file(tmp_path):
+    output_path = tmp_path / "surface_siblings.h5"
+
+    with h5py.File(output_path, "w") as h5:
+        run_surface_launched_cruise_missile_scenario(
+            initial_position_ecef=lla_to_ecef(0.0, 0.0, 1000.0),
+            cruise_speed=250.0,
+            cruise_altitude=1200.0,
+            cruise_heading=0.0,
+            boost_duration=0.5,
+            boost_acceleration=20.0,
+            launch_pitch_angle=np.radians(10.0),
+            t_end=0.1,
+            sample_interval=0.1,
+            output_group=h5.create_group("run_a"),
+        )
+        run_surface_launched_cruise_missile_scenario(
+            initial_position_ecef=lla_to_ecef(0.0, 0.0, 1000.0),
+            cruise_speed=250.0,
+            cruise_altitude=1200.0,
+            cruise_heading=0.0,
+            boost_duration=0.5,
+            boost_acceleration=20.0,
+            launch_pitch_angle=np.radians(10.0),
+            t_end=0.1,
+            sample_interval=0.1,
+            output_group=h5.create_group("run_b"),
+        )
+
+    with h5py.File(output_path, "r") as h5:
+        assert "trajectories" in h5["run_a"]
+        assert "trajectories" in h5["run_b"]
