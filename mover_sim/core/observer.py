@@ -366,6 +366,8 @@ class CSVLogger(BaseTrajectoryLogger):
 class HDF5Logger(BaseTrajectoryLogger):
     """Structured trajectory logger that stores per-platform datasets in an HDF5 file."""
 
+    DEFAULT_EVENT_TOPICS = ["platform_registered", "waypoint_reached", "intercept"]
+
     def __init__(
         self,
         engine,
@@ -377,6 +379,7 @@ class HDF5Logger(BaseTrajectoryLogger):
         compression_level=4,
         include_state=True,
         include_lla=True,
+        event_topics=None,
     ):
         """
         Parameters:
@@ -389,6 +392,7 @@ class HDF5Logger(BaseTrajectoryLogger):
             compression_level: Compression level passed to HDF5 when compression is enabled.
             include_state: If True, store the full mover state dataset.
             include_lla: If True, store derived geodetic coordinates when position is available.
+            event_topics: Optional list of broker topics to log when include_events is enabled.
         """
         try:
             import h5py  # type: ignore
@@ -409,7 +413,7 @@ class HDF5Logger(BaseTrajectoryLogger):
             include_state=include_state,
             include_lla=include_lla,
             include_events=include_events,
-            event_topics=["platform_registered", "waypoint_reached", "intercept"],
+            event_topics=event_topics or self.DEFAULT_EVENT_TOPICS,
             batch_size=batch_size,
         )
 

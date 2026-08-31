@@ -170,16 +170,14 @@ class SimulationContext:
     * On Globe
     * Entire trajectory
     * Make movie
-* More examples
+* More examples (need to spec these better)
     * Rocket w/ stage separation
     * Air Launch cruise missile
-    * Surface launch cruise missile
 * Future features (need not be added yet, but ideally not precluded)
     * despawn platform (e.g. if crashes into ground or something)
     * collision evaluator
         * including with the ground
     * line of sight evaluator
-* Engine could add EndSimulation event to itself instead of having an explicit t_end
 '''
 class SimulationEngine:
     """
