@@ -172,7 +172,6 @@ class SimulationContext:
     * Make movie
 * More examples (need to spec these better)
     * Rocket w/ stage separation
-    * Air Launch cruise missile
 * Future features (need not be added yet, but ideally not precluded)
     * despawn platform (e.g. if crashes into ground or something)
     * collision evaluator
