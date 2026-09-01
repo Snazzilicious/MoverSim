@@ -166,18 +166,16 @@ class SimulationContext:
 
 '''
 ### Comments
-* Plotting
-    * ideally simple interface
-    * ideally simple display (not a full GUI)
-    * On Globe
-    * Entire trajectory
-    * Make movie
-    * specs
-        * show position vs time on plot
-        * show velocity somewhere else
-            * in side pain for movies
-            * not sure what to do about static plots
-        * List events in side pain
+* Redesign Aircraft movers
+    * Coriolis must include orientation change
+    * Need Torque / rotational math
+        * review in math.orientation
+    * Fixed wing mover
+    * Fixed wing autopilot
+    * Rocket mover
+    * Rocket guidance
+    * Remove old aircraft mover(s)
+        * Rewrite scenarios
 * Future features (need not be added yet, but ideally not precluded)
     * despawn platform (e.g. if crashes into ground or something)
         * update ballistic missile scenario
