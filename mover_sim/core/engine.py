@@ -167,6 +167,8 @@ class SimulationContext:
 '''
 ### Comments
 * Plotting
+    * ideally simple interface
+    * ideally simple display (not a full GUI)
     * On Globe
     * Entire trajectory
     * Make movie
