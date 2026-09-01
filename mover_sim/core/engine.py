@@ -170,8 +170,15 @@ class SimulationContext:
     * On Globe
     * Entire trajectory
     * Make movie
+    * specs
+        * show position vs time on plot
+        * show velocity somewhere else
+            * in side pain for movies
+            * not sure what to do about static plots
+        * List events in side pain
 * Future features (need not be added yet, but ideally not precluded)
     * despawn platform (e.g. if crashes into ground or something)
+        * update ballistic missile scenario
     * collision evaluator
         * including with the ground
     * line of sight evaluator

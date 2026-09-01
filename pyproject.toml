@@ -9,6 +9,7 @@ description = "A general-purpose simulator for moving platforms in a global coor
 readme = "README.md"
 requires-python = ">=3.8"
 dependencies = [
+    "h5py>=3.0.0",
     "numpy>=1.20.0",
     "scipy>=1.7.0",
 ]
