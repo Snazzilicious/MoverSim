@@ -119,6 +119,31 @@ def quaternion_derivative_from_body_rates(quaternion, body_rates):
     return 0.5 * quaternion_multiply(quaternion, omega)
 
 
+def quaternion_to_euler_zyx(quaternion):
+    """Convert a scalar-first quaternion to roll, pitch, yaw angles in radians.
+
+    The returned angles follow the aerospace ZYX convention: yaw about world Z,
+    pitch about intermediate Y, and roll about body X. The quaternion is assumed to
+    map body-frame vectors into world-frame vectors.
+    """
+
+    w, x, y, z = normalize_quaternion(quaternion)
+
+    sin_roll_cos_pitch = 2.0 * (w * x + y * z)
+    cos_roll_cos_pitch = 1.0 - 2.0 * (x * x + y * y)
+    roll = np.arctan2(sin_roll_cos_pitch, cos_roll_cos_pitch)
+
+    sin_pitch = 2.0 * (w * y - z * x)
+    sin_pitch = np.clip(sin_pitch, -1.0, 1.0)
+    pitch = np.arcsin(sin_pitch)
+
+    sin_yaw_cos_pitch = 2.0 * (w * z + x * y)
+    cos_yaw_cos_pitch = 1.0 - 2.0 * (y * y + z * z)
+    yaw = np.arctan2(sin_yaw_cos_pitch, cos_yaw_cos_pitch)
+
+    return np.array([roll, pitch, yaw])
+
+
 def build_aircraft_body_axes(path_tangent, local_vertical, curvature_vector=None):
     """
     Build a right-handed aircraft body frame from path geometry.

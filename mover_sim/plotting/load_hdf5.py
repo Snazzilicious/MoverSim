@@ -23,7 +23,10 @@ def _import_h5py():
     try:
         import h5py  # type: ignore
     except ImportError as exc:
-        raise ImportError("load_hdf5_run requires h5py to be installed") from exc
+        raise ImportError(
+            "load_hdf5_run requires h5py to be installed. "
+            "Install it with `pip install h5py`."
+        ) from exc
     return h5py
 
 
@@ -151,6 +154,13 @@ def load_hdf5_run(group_or_path):
     Accepts either an `h5py.Group` representing one logger run root or a file path. When
     a file path is provided, the file must either be a run root itself or contain exactly
     one child group that is a run root.
+
+    Example:
+        ```python
+        from mover_sim.plotting import load_hdf5_run
+
+        run = load_hdf5_run("output/scenario_air_launched_cruise_missile.h5")
+        ```
     """
 
     h5py = _import_h5py()

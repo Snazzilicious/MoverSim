@@ -269,12 +269,54 @@ CSVLogger(
 )
 ```
 
+### Plotting HDF5 Runs
+
+The built-in plotting API currently targets `HDF5Logger` output.
+
+Supported input schema:
+- `/trajectories/<platform_id>/time`
+- optional per-platform datasets such as:
+  - `position`
+  - `velocity`
+  - `lla`
+  - `orientation`
+  - `body_rates`
+- `/events/*` when event logging is enabled
+- `/metadata` attributes
+
+CSV plotting parity is intentionally out of scope for the current plotting utilities.
+
+Static summary figure:
+
+```python
+from mover_sim.plotting import load_hdf5_run, plot_run_summary
+
+run = load_hdf5_run("output/scenario_air_launched_cruise_missile.h5")
+fig = plot_run_summary(run)
+fig.savefig("output/scenario_air_summary.png", dpi=150)
+```
+
+Interactive globe view:
+
+```python
+from mover_sim.plotting import load_hdf5_run, plot_run_globe
+
+run = load_hdf5_run("output/scenario_air_launched_cruise_missile.h5")
+globe = plot_run_globe(run)
+```
+
+Notes:
+- `plot_run_summary()` requires `matplotlib`
+- `plot_run_globe()` prefers `plotly` when installed and otherwise falls back to `matplotlib` 3D
+- if an HDF5 file contains multiple run groups, pass a specific `h5py.Group` to `load_hdf5_run()`
+
 ### Example Scenarios
 
 Reference scripts:
 - `examples/scenario_a.py`: waypoint flight pattern around SFO
 - `examples/scenario_b.py`: interceptor aircraft and dynamically spawned missile
-- `examples/plot_trajectories.py`: plotting helper for generated CSV files
+- `examples/plot_hdf5_summary.py`: generate a static summary figure from an HDF5 run
+- `examples/plot_hdf5_globe.py`: generate a globe-style plot from an HDF5 run
 
 ## Testing
 

@@ -86,7 +86,8 @@ engine.run(30.0)
 
 - `python examples/scenario_a.py`
 - `python examples/scenario_b.py`
-- `python examples/plot_trajectories.py`
+- `python examples/plot_hdf5_summary.py output/scenario_air_launched_cruise_missile.h5`
+- `python examples/plot_hdf5_globe.py output/scenario_air_launched_cruise_missile.h5`
 
 ## Documentation
 
