@@ -29,7 +29,7 @@ class Controller:
 
     def _update_recurring(self, engine):
         """
-        Wrapper to run the controller's update loop and trigger solver resets if necessary.
+        Wrapper to run the controller's update loop.
         """
         self.update(engine.t, engine)
 

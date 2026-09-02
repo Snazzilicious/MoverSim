@@ -179,3 +179,10 @@ def build_aircraft_body_axes(path_tangent, local_vertical, curvature_vector=None
     right = _normalize_vector(np.cross(up, forward), "right_axis")
     up = _normalize_vector(np.cross(forward, right), "up_axis")
     return forward, right, up
+
+
+def renormalize_basis( basis ):
+    """Returns the nearest unitary matrix to the provided matrix
+    """
+    u,_,vh = svd( basis )
+    return u @ vh

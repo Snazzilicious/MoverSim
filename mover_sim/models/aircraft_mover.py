@@ -443,3 +443,200 @@ class Aircraft6DOFAutopilot(Controller):
         mover.roll_moment_cmd = self.k_roll * heading_error - self.k_roll_rate * mover.body_rates[0]
         mover.pitch_moment_cmd = self.k_pitch * pitch_error + self.k_pitch_rate * mover.body_rates[1]
         mover.yaw_moment_cmd = -self.k_yaw * yaw_correction - self.k_yaw_rate * mover.body_rates[2]
+
+
+
+class FixedWingMover(TranslationalMover, IntegratedMover):
+    """Rigid-body aircraft mover with translational, attitude, and body-rate state."""
+
+    class OrientationCorrectionEvent :
+        """Periodically forcibly renormalizes orientation value in the engine's context. 
+        """
+        pass
+
+    def __init__(
+        self,
+        initial_position,
+        initial_velocity,
+        initial_orientation=None,
+        initial_body_rates=None,
+        mass=10000.0,
+        inertia=None,
+        area=30.0,
+        cd0=0.02,
+        t_max=80000.0,
+        angular_damping=None,
+        use_coriolis=True,
+    ):
+        """
+        Parameters:
+            initial_position: ECEF coordinates [X, Y, Z] in meters.
+            initial_velocity: ECEF velocity [Vx, Vy, Vz] in m/s.
+            initial_orientation: Optional forward, right, up basis matrix in ECEF. If omitted,
+                an orientation is derived from the initial velocity and local vertical.
+            initial_body_rates: Optional time derivatives of initial_orientation.
+            mass: Vehicle mass in kg.
+            inertia: Body inertia as a `(3, 3)` tensor or `(3,)` principal moments.
+            area: Reference area in m^2 used for drag.
+            cd0: Zero-lift drag coefficient.
+            t_max: Maximum thrust in Newtons.
+            angular_damping: Per-axis angular damping coefficients.
+            use_coriolis: If True, include Coriolis acceleration in world-frame translation.
+
+        State layout:
+            [x, y, z, vx, vy, vz, o11, ..., o33, o11', ..., o33']
+        """
+
+        self.initial_orientation = renormalize_basis( initial_orientation )
+
+        # All 0-100
+        self.thrust_cmd = 0.0
+        self.roll_cmd = 0.0
+        self.pitch_cmd = 0.0
+        self.yaw_cmd = 0.0
+    
+    def _thrust_vector( self, forward ):
+        return ( self.thrust_cmd / 100.0 ) * self.max_thrust * forward
+    
+    def _lift_vector( self, up, ... ):
+        raise NotImplementedError
+    
+    def _roll_torque( self, forward, roll_rate ):
+        torque = ( self.roll_cmd / 100.0 ) * self.max_roll_torque
+        torque *= ( self.max_roll_rate - roll_rate ) / self.max_roll_rate
+        return torque * forward
+    
+    def _pitch_torque( self, right, aoa ):
+        torque = ( self.pitch_cmd / 100.0 ) * self.max_pitch_torque
+        torque *= ( self.max_aoa - aoa ) / self.max_aoa
+        return torque * right
+    
+    def _yaw_torque( self, up, slip_angle ):
+        torque = ( self.yaw_cmd / 100.0 ) * self.max_yaw_torque
+        torque *= ( self.max_slip_angle - slip_angle ) / self.max_slip_angle
+        return torque * up
+    
+
+    def compute_state_derivative(self, t, state):
+        # unpack current state
+        pos = state[self.get_position_slice()]
+        vel = state[self.get_velocity_slice()]
+        orientation = state[self.get_orientation_slice()].reshape((3,3))
+        orientation = renormalize_basis( orientation )
+        body_rates = state[self.get_body_rate_slice()]
+
+        forward = orientation[:,0]
+        right = orientation[:,1]
+        up = orientation[:,2]
+
+        # trivial derivatives
+        dpos = vel
+        dorientation = body_rates
+
+        # Body acceleration
+        body_force = self._thrust_vector( forward )
+        body_force += self._lift_vector( up, ... )
+        body_force += self._drag_force( ... )
+
+        accel = gravity(pos)
+        accel += centrifugal_acceleration(...)
+        accel += coriolis_acceleration(...)
+
+        dvel = accel + body_force / self.mass
+
+        # Rotational acceleration
+        # TODO
+        # include coriolis rotation
+
+
+        return np.concatenate([dpos, dvel, dorientation.reshape(-1), dbody_rates.reshape((3,3))])
+
+
+class FixedWingAutopilot(Controller):
+    def __init__( self, route ):
+
+    def update( self, t, engine ):
+        """Adjusts thrust, roll, pitch, yaw commands to remain on course
+        """
+
+
+
+
+class RocketMover(TranslationalMover, IntegratedMover):
+    """Rigid-body rocket mover with translational, attitude, and body-rate state."""
+
+    class OrientationCorrectionEvent :
+        """Periodically forcibly renormalizes orientation value in the engine's context. 
+        """
+        pass
+
+    def __init__(self.command_direction
+        self,
+        initial_position,
+        initial_velocity,
+        initial_orientation=None,
+        initial_body_rates=None,
+        mass=10000.0,
+        inertia=None,
+        area=30.0,
+        cd0=0.02,
+        t_max=80000.0,
+        angular_damping=None,
+        use_coriolis=True,
+    ):
+        """
+        Parameters:
+            initial_position: ECEF coordinates [X, Y, Z] in meters.
+            initial_velocity: ECEF velocity [Vx, Vy, Vz] in m/s.
+            initial_orientation: Optional forward, vector in ECEF. If omitted,
+                an orientation is derived from the initial velocity and local vertical.
+            initial_body_rates: Optional time derivative of initial_orientation.
+            mass: Vehicle mass in kg.
+            inertia: Body inertia.
+            area: Reference area in m^2 used for drag.
+            cd0: Zero-lift drag coefficient.
+            t_max: Maximum thrust in Newtons.
+            angular_damping: Per-axis angular damping coefficients.
+            use_coriolis: If True, include Coriolis acceleration in world-frame translation.
+
+        State layout:
+            [x, y, z, vx, vy, vz, o1, ..., o3, o1', ..., o3']
+        """
+    
+    def _thrust_vector( self, forward ):
+        return ( self.thrust_cmd / 100.0 ) * self.max_thrust * forward
+    
+    def _body_torque( self, forward ):
+        # make sure commanded direction is orthogonal to forward
+    
+
+    def compute_state_derivative(self, t, state):
+        # unpack current state
+        pos = state[self.get_position_slice()]
+        vel = state[self.get_velocity_slice()]
+        orientation = state[self.get_orientation_slice()].reshape((3,3))
+        orientation = _normalize_vector( orientation )
+        body_rates = state[self.get_body_rate_slice()]
+
+        forward = orientation
+
+        # trivial derivatives
+        dpos = vel
+        dorientation = body_rates
+
+        # Body acceleration
+        body_force = self._thrust_vector( forward )
+        body_force += self._lift_vector( up, ... )
+        body_force += self._drag_force( ... )
+
+        accel = gravity(pos)
+        accel += centrifugal_acceleration(...)
+        accel += coriolis_acceleration(...)
+
+        dvel = accel + body_force / self.mass.reshape((3,3))
+
+        return np.concatenate([dpos, dvel, dorientation, dbody_rates])
+
+
+        
+    
