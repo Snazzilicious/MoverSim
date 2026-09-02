@@ -6,10 +6,12 @@
         * need to renormalization routine
     * Coriolis update
         * must include orientation change
+    * Restoring forces
     * Fixed wing mover
     * Fixed wing autopilot
     * Rocket mover
     * Rocket guidance
+    * Ballistic mover
     * Remove old aircraft mover(s)
         * Rewrite scenarios
     * Remove quaternions everywhere

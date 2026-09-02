@@ -463,7 +463,7 @@ class FixedWingMover(TranslationalMover, IntegratedMover):
         mass=10000.0,
         inertia=None,
         area=30.0,
-        cd0=0.02,
+        ldr=2.0,
         t_max=80000.0,
         angular_damping=None,
         use_coriolis=True,
@@ -477,8 +477,8 @@ class FixedWingMover(TranslationalMover, IntegratedMover):
             initial_body_rates: Optional time derivatives of initial_orientation.
             mass: Vehicle mass in kg.
             inertia: Body inertia as a `(3, 3)` tensor or `(3,)` principal moments.
-            area: Reference area in m^2 used for drag.
-            cd0: Zero-lift drag coefficient.
+            area: Reference area in m^2 used for lift.
+            ldr: Lift to drag ratio.
             t_max: Maximum thrust in Newtons.
             angular_damping: Per-axis angular damping coefficients.
             use_coriolis: If True, include Coriolis acceleration in world-frame translation.
@@ -548,7 +548,6 @@ class FixedWingMover(TranslationalMover, IntegratedMover):
         # TODO
         # include coriolis rotation
 
-
         return np.concatenate([dpos, dvel, dorientation.reshape(-1), dbody_rates.reshape((3,3))])
 
 
@@ -602,12 +601,23 @@ class RocketMover(TranslationalMover, IntegratedMover):
         State layout:
             [x, y, z, vx, vy, vz, o1, ..., o3, o1', ..., o3']
         """
+
+        self.steer_direction = np.array([1.0,0.0,0.0])
+        self.steer_cmd = 0.0
     
     def _thrust_vector( self, forward ):
         return ( self.thrust_cmd / 100.0 ) * self.max_thrust * forward
     
     def _body_torque( self, forward ):
         # make sure commanded direction is orthogonal to forward
+        direction = self.steer_direction - ( forward.dot(self.steer_direction) ) * forward
+        direction = _normalize_vector( direction )
+
+
+
+        return ( self.steer_cmd / 100.0 ) * direction
+
+
     
 
     def compute_state_derivative(self, t, state):
