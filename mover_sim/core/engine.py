@@ -164,25 +164,6 @@ class SimulationContext:
         self.t = t
 
 
-'''
-### Comments
-* Redesign Aircraft movers
-    * Coriolis must include orientation change
-    * Need Torque / rotational math
-        * review in math.orientation
-    * Fixed wing mover
-    * Fixed wing autopilot
-    * Rocket mover
-    * Rocket guidance
-    * Remove old aircraft mover(s)
-        * Rewrite scenarios
-* Future features (need not be added yet, but ideally not precluded)
-    * despawn platform (e.g. if crashes into ground or something)
-        * update ballistic missile scenario
-    * collision evaluator
-        * including with the ground
-    * line of sight evaluator
-'''
 class SimulationEngine:
     """
     The core Simulation Engine that coordinates time advancement, continuous integration, 
