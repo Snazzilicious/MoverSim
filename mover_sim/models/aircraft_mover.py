@@ -462,8 +462,9 @@ class FixedWingMover(TranslationalMover, IntegratedMover):
         initial_body_rates=None,
         mass=10000.0,
         inertia=None,
-        area=30.0,
-        ldr=2.0,
+        frontal_area=10.0,
+        lifting_area=30.0,
+        side_area=20.0,
         t_max=80000.0,
         angular_damping=None,
         use_coriolis=True,
@@ -472,7 +473,7 @@ class FixedWingMover(TranslationalMover, IntegratedMover):
         Parameters:
             initial_position: ECEF coordinates [X, Y, Z] in meters.
             initial_velocity: ECEF velocity [Vx, Vy, Vz] in m/s.
-            initial_orientation: Optional forward, right, up basis matrix in ECEF. If omitted,
+            initial_orientation: Optional mover-frame forward, right, up basis matrix in ECEF. If omitted,
                 an orientation is derived from the initial velocity and local vertical.
             initial_body_rates: Optional time derivatives of initial_orientation.
             mass: Vehicle mass in kg.
@@ -498,7 +499,13 @@ class FixedWingMover(TranslationalMover, IntegratedMover):
     def _thrust_vector( self, forward ):
         return ( self.thrust_cmd / 100.0 ) * self.max_thrust * forward
     
+    def _drag_vector( self, forward ):
+        raise NotImplementedError
+    
     def _lift_vector( self, up, ... ):
+        raise NotImplementedError
+    
+    def _slip_vector( self, right ):
         raise NotImplementedError
     
     def _roll_torque( self, forward, roll_rate ):
@@ -523,7 +530,7 @@ class FixedWingMover(TranslationalMover, IntegratedMover):
         vel = state[self.get_velocity_slice()]
         orientation = state[self.get_orientation_slice()].reshape((3,3))
         orientation = renormalize_basis( orientation )
-        body_rates = state[self.get_body_rate_slice()]
+        body_rates = state[self.get_body_rate_slice()].reshape((3,3))
 
         forward = orientation[:,0]
         right = orientation[:,1]
@@ -535,8 +542,9 @@ class FixedWingMover(TranslationalMover, IntegratedMover):
 
         # Body acceleration
         body_force = self._thrust_vector( forward )
+        body_force += self._drag_vector( forward )
         body_force += self._lift_vector( up, ... )
-        body_force += self._drag_force( ... )
+        body_force += self._slip_vector( right )
 
         accel = gravity(pos)
         accel += centrifugal_acceleration(...)
@@ -548,14 +556,14 @@ class FixedWingMover(TranslationalMover, IntegratedMover):
         # TODO
         # include coriolis rotation
 
-        return np.concatenate([dpos, dvel, dorientation.reshape(-1), dbody_rates.reshape((3,3))])
+        return np.concatenate([dpos, dvel, dorientation.reshape(-1), dbody_rates.reshape(-1)])
 
 
 class FixedWingAutopilot(Controller):
     def __init__( self, route ):
 
     def update( self, t, engine ):
-        """Adjusts thrust, roll, pitch, yaw commands to remain on course
+        """Adjusts thrust, roll, pitch, yaw commands to remain on course.
         """
 
 
