@@ -1,6 +1,5 @@
 
 * Redesign Aircraft movers
-    * Helpers for rotational motion
     * Coriolis update
         * must include orientation change
     * Standard damping & equilibrium dynamics for control axes

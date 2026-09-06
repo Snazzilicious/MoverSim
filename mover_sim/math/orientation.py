@@ -184,5 +184,21 @@ def build_aircraft_body_axes(path_tangent, local_vertical, curvature_vector=None
 def renormalize_basis( basis ):
     """Returns the nearest unitary matrix to the provided matrix
     """
-    u,_,vh = svd( basis )
+    u, _, vh = np.linalg.svd(basis)
     return u @ vh
+
+def vector_to_skew_symmetric(omega):
+    """Convert a 3D angular velocity vector [p, q, r] to a skew-symmetric matrix."""
+    p, q, r = _as_vector(omega, 3, "omega")
+    return np.array([
+        [0.0, -r, q],
+        [r, 0.0, -p],
+        [-q, p, 0.0]
+    ])
+
+def skew_symmetric_to_vector(Omega):
+    """Extract a 3D angular velocity vector [p, q, r] from a skew-symmetric matrix."""
+    Omega = np.asarray(Omega)
+    if Omega.shape != (3, 3) or not np.allclose(Omega, -Omega.T, atol=1e-9):
+         raise ValueError("Input must be a 3x3 skew-symmetric matrix")
+    return np.array([Omega[2, 1], Omega[0, 2], Omega[1, 0]])
