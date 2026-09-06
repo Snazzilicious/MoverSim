@@ -1,12 +1,9 @@
 
 * Redesign Aircraft movers
-    * Need Torque / rotational math
-        * review in math.orientation
-        * use forward, right, up
-        * need renormalization routine
-    * Standard damping & equilibrium dynamics for control axes
+    * Helpers for rotational motion
     * Coriolis update
         * must include orientation change
+    * Standard damping & equilibrium dynamics for control axes
     * Restoring forces
     * Fixed wing mover
     * Fixed wing autopilot

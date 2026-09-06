@@ -10,3 +10,7 @@ venv/
 output/
 *.png
 *.h5
+*.aux
+*.log
+*.pdf
+

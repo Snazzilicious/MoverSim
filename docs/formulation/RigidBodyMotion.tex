@@ -1,0 +1,667 @@
+\documentclass{article}
+\usepackage{amsmath, amssymb}
+
+\title{Rigid-Body Equations of Motion from a Discrete-Mass Model}
+\author{}
+\date{}
+
+\begin{document}
+\maketitle
+
+\section{Kinematic representation}
+
+Consider a rigid body represented by discrete masses \(m_i\), with inertial-frame positions
+
+\[
+x_i(t) = b(t) + A(t)y_i,
+\]
+
+where
+
+\[
+b(t) \in \mathbb{R}^3
+\]
+
+is the location of the center of mass,
+
+\[
+y_i \in \mathbb{R}^3
+\]
+
+are fixed coordinates attached to the body, and
+
+\[
+A(t) \in SO(3)
+\]
+
+is the rotation matrix mapping body-frame vectors into the inertial frame.
+
+Since \(A\) is a rotation matrix,
+
+\[
+A^T A = I.
+\]
+
+Choose the body-frame origin to coincide with the center of mass. Then
+
+\[
+\sum_i m_i y_i = 0.
+\]
+
+Define the total mass
+
+\[
+M = \sum_i m_i.
+\]
+
+\section{Discrete equations of motion}
+
+Let \(f_i\) denote the external force acting on mass \(i\), and let \(g_{ij}\) denote the internal force exerted by mass \(j\) on mass \(i\).
+
+The total force on mass \(i\) is
+
+\[
+F_i = f_i+\sum_{j\ne i}g_{ij}.
+\]
+
+Newton's second law gives
+
+\[
+m_i\ddot{x}_i = f_i+\sum_{j\ne i}g_{ij}.
+\]
+
+From
+
+\[
+x_i=b+Ay_i,
+\]
+
+and because \(y_i\) is constant,
+
+\[
+\dot{x}_i = \dot{b}+\dot{A}y_i,
+\]
+
+and
+
+\[
+\ddot{x}_i = \ddot{b}+\ddot{A}y_i.
+\]
+
+Thus
+
+\[
+m_i\left(\ddot{b}+\ddot{A}y_i\right) = f_i+\sum_{j\ne i}g_{ij}.
+\]
+
+\section{Translational equation}
+
+Sum the equations over all masses:
+
+\[
+\sum_i m_i\ddot{b} + \sum_i m_i\ddot{A}y_i = \sum_i f_i + \sum_i\sum_{j\ne i}g_{ij}.
+\]
+
+Since \(\ddot b\) and \(\ddot A\) are independent of \(i\),
+
+\[
+M\ddot b + \ddot A\sum_i m_i y_i = \sum_i f_i + \sum_i\sum_{j\ne i}g_{ij}.
+\]
+
+Using
+
+\[
+\sum_i m_i y_i=0,
+\]
+
+and Newton's third law,
+
+\[
+g_{ij}=-g_{ji},
+\]
+
+the internal forces cancel pairwise:
+
+\[
+\sum_i\sum_{j\ne i}g_{ij}=0.
+\]
+
+Therefore,
+
+\[
+M\ddot b=\sum_i f_i.
+\]
+
+Hence
+
+\[
+\ddot b = \frac{1}{M}\sum_i f_i.
+\]
+
+\section{Rotational equation in matrix form}
+
+Return to the individual equations,
+
+\[
+m_i\left(\ddot b+\ddot A y_i\right) = f_i+\sum_{j\ne i}g_{ij}.
+\]
+
+Multiply on the right by \(y_i^T\) and sum over \(i\):
+
+\[
+\sum_i m_i\ddot b\,y_i^T + \sum_i m_i\ddot A y_i y_i^T = \sum_i f_i y_i^T + \sum_i\sum_{j\ne i}g_{ij}y_i^T.
+\]
+
+The first term vanishes because
+
+\[
+\sum_i m_i y_i=0.
+\]
+
+Define the body-frame second-moment matrix
+
+\[
+C = \sum_i m_i y_i y_i^T.
+\]
+
+Then
+
+\[
+\ddot A C = \sum_i f_i y_i^T + \sum_i\sum_{j\ne i}g_{ij}y_i^T.
+\]
+
+Assuming \(C\) is nonsingular,
+
+\[
+\ddot A = \left[ \sum_i f_i y_i^T + \sum_i\sum_{j\ne i}g_{ij}y_i^T \right]C^{-1}.
+\]
+
+This is the direct equation obtained from the discrete particle equations. However, it does not yet explicitly enforce the fact that \(A\) must remain a rotation matrix. That constraint is obtained from \(A^T A=I\).
+
+\section{Consequences of \((A^T A)'=0\)}
+
+Because
+
+\[
+A^T A=I,
+\]
+
+differentiate with respect to time:
+
+\[
+\left(A^T A\right)' = \dot A^T A+A^T\dot A = 0.
+\]
+
+Therefore,
+
+\[
+\dot A^T A+A^T\dot A=0.
+\]
+
+Define
+
+\[
+\Omega=A^T\dot A.
+\]
+
+Then
+
+\[
+\Omega^T = \dot A^T A = -A^T\dot A = -\Omega.
+\]
+
+Thus
+
+\[
+\Omega^T=-\Omega.
+\]
+
+Therefore \(\Omega\) is skew-symmetric and contains only three independent components.
+
+Since
+
+\[
+A^TA=I,
+\]
+
+we can multiply the definition of \(\Omega\) by \(A\) on the left:
+
+\[
+A\Omega = AA^T\dot A = \dot A.
+\]
+
+Hence
+
+\[
+\dot A=A\Omega.
+\]
+
+The skew-symmetric matrix \(\Omega\) is the body-frame angular-velocity matrix. It may equivalently be written as
+
+\[
+\Omega=\widehat{\omega},
+\]
+
+where
+
+\[
+\widehat{\omega} = \begin{bmatrix} 0&-\omega_3&\omega_2\\ \omega_3&0&-\omega_1\\ -\omega_2&\omega_1&0 \end{bmatrix}.
+\]
+
+\section{Second derivative of the orthogonality constraint}
+
+Differentiate
+
+\[
+\dot A^T A+A^T\dot A=0
+\]
+
+again:
+
+\[
+\ddot A^T A + \dot A^T\dot A + \dot A^T\dot A + A^T\ddot A = 0.
+\]
+
+Therefore,
+
+\[
+\ddot A^T A + 2\dot A^T\dot A + A^T\ddot A = 0.
+\]
+
+Equivalently,
+
+\[
+A^T\ddot A + \ddot A^T A = -2\dot A^T\dot A.
+\]
+
+Thus the symmetric part of \(A^T\ddot A\) is constrained by \(\dot A\):
+
+\[
+\operatorname{sym}(A^T\ddot A) = -\dot A^T\dot A.
+\]
+
+Using
+
+\[
+\dot A=A\Omega,
+\]
+
+we obtain
+
+\[
+\dot A^T\dot A = \Omega^T A^T A\Omega = \Omega^T\Omega.
+\]
+
+Since
+
+\[
+\Omega^T=-\Omega,
+\]
+
+we have
+
+\[
+\Omega^T\Omega = -\Omega^2.
+\]
+
+Therefore,
+
+\[
+\operatorname{sym}(A^T\ddot A) = \Omega^2.
+\]
+
+\section{Decomposition of \(A^T\ddot A\)}
+
+Differentiate
+
+\[
+\dot A=A\Omega:
+\]
+
+\[
+\ddot A = \dot A\Omega + A\dot\Omega.
+\]
+
+Substitute
+
+\[
+\dot A=A\Omega:
+\]
+
+\[
+\ddot A = A\Omega^2+A\dot\Omega.
+\]
+
+Hence
+
+\[
+\ddot A = A\left(\dot\Omega+\Omega^2\right).
+\]
+
+Multiplying on the left by \(A^T\),
+
+\[
+A^T\ddot A = \dot\Omega+\Omega^2.
+\]
+
+Now,
+
+\[
+\dot\Omega^T = -\dot\Omega,
+\]
+
+so \(\dot\Omega\) is skew-symmetric, while
+
+\[
+(\Omega^2)^T = (\Omega^T)^2 = (-\Omega)^2 = \Omega^2,
+\]
+
+so \(\Omega^2\) is symmetric.
+
+Consequently,
+
+\[
+\operatorname{skew}(A^T\ddot A)=\dot\Omega,
+\]
+
+and
+
+\[
+\operatorname{sym}(A^T\ddot A)=\Omega^2.
+\]
+
+This is the key simplification obtained from the constraint \(A^T A=I\).
+
+\section{Apply the constraint to the force equation}
+
+Define
+
+\[
+Q = \sum_i f_i y_i^T + \sum_i\sum_{j\ne i}g_{ij}y_i^T.
+\]
+
+Then the discrete equations give
+
+\[
+\ddot A C=Q,
+\]
+
+or
+
+\[
+\ddot A=QC^{-1}.
+\]
+
+Therefore,
+
+\[
+A^T\ddot A = A^TQC^{-1}.
+\]
+
+Using
+
+\[
+A^T\ddot A = \dot\Omega+\Omega^2,
+\]
+
+we obtain
+
+\[
+\dot\Omega+\Omega^2 = A^TQC^{-1}.
+\]
+
+Taking the skew-symmetric part gives the rotational evolution equation:
+
+\[
+\dot\Omega = \operatorname{skew} \left(A^TQC^{-1}\right).
+\]
+
+Thus,
+
+\[
+\dot\Omega = \operatorname{skew} \left[ A^T \left( \sum_i f_i y_i^T + \sum_i\sum_{j\ne i}g_{ij}y_i^T \right) C^{-1} \right].
+\]
+
+This equation contains only the three independent rotational degrees of freedom.
+
+\section{Simplification of the internal-force term}
+
+Assume the internal forces obey Newton's third law:
+
+\[
+g_{ij}=-g_{ji}.
+\]
+
+The internal contribution is
+
+\[
+\sum_i\sum_{j\ne i}g_{ij}y_i^T.
+\]
+
+Group the terms belonging to each pair \(i,j\). For one pair,
+
+\[
+g_{ij}y_i^T+g_{ji}y_j^T = g_{ij}(y_i-y_j)^T.
+\]
+
+Therefore,
+
+\[
+\sum_i\sum_{j\ne i}g_{ij}y_i^T = \sum_{i<j}g_{ij}(y_i-y_j)^T.
+\]
+
+Hence
+
+\[
+Q = \sum_i f_i y_i^T + \sum_{i<j}g_{ij}(y_i-y_j)^T.
+\]
+
+\section{Central internal forces}
+
+For ordinary rigid-body constraint forces, assume each internal force is directed along the line connecting the two masses:
+
+\[
+g_{ij} = \lambda_{ij}(x_j-x_i).
+\]
+
+Since
+
+\[
+x_j-x_i = A(y_j-y_i),
+\]
+
+we have
+
+\[
+g_{ij} = \lambda_{ij}A(y_j-y_i).
+\]
+
+Let
+
+\[
+q_{ij}=y_j-y_i.
+\]
+
+Then
+
+\[
+g_{ij} = \lambda_{ij}Aq_{ij}.
+\]
+
+The pair contribution to \(Q\) is
+
+\[
+g_{ij}(y_i-y_j)^T = -\lambda_{ij}Aq_{ij}q_{ij}^T.
+\]
+
+Therefore,
+
+\[
+A^Tg_{ij}(y_i-y_j)^T = -\lambda_{ij}q_{ij}q_{ij}^T.
+\]
+
+But
+
+\[
+q_{ij}q_{ij}^T
+\]
+
+is symmetric. Hence
+
+\[
+\operatorname{skew} \left[ A^Tg_{ij}(y_i-y_j)^T \right] = 0.
+\]
+
+Therefore all central internal pair forces disappear from the skew part of the rotational equation.
+
+Thus,
+
+\[
+\dot\Omega = \operatorname{skew} \left[ A^T \left( \sum_i f_i y_i^T \right) C^{-1} \right].
+\]
+
+This is the rotational equation when the internal forces are central constraint forces satisfying Newton's third law.
+
+\section{What happens to the internal forces?}
+
+The internal forces have not simply been discarded.
+
+The complete equation is
+
+\[
+\ddot A = \left[ \sum_i f_i y_i^T + \sum_{i<j}g_{ij}(y_i-y_j)^T \right]C^{-1}.
+\]
+
+The internal forces contribute to the symmetric part of
+
+\[
+A^T\ddot A.
+\]
+
+But the symmetric part is already determined kinematically:
+
+\[
+\operatorname{sym}(A^T\ddot A)=\Omega^2.
+\]
+
+Thus the internal constraint forces enforce
+
+\[
+\operatorname{sym}(A^T\ddot A)=\Omega^2,
+\]
+
+while the external forces determine the skew part,
+
+\[
+\operatorname{skew}(A^T\ddot A)=\dot\Omega.
+\]
+
+This gives the decomposition
+
+\[
+A^T\ddot A = \underbrace{\dot\Omega}_{\text{rotational dynamics}} + \underbrace{\Omega^2}_{\text{rigid-body kinematics}}.
+\]
+
+\section{Final equations for numerical integration}
+
+The system can therefore be integrated using the state variables
+
+\[
+b,\qquad v=\dot b,\qquad A,\qquad \Omega.
+\]
+
+The equations are
+
+\[
+\dot b=v
+\]
+
+\[
+\dot v = \frac{1}{M}\sum_i f_i
+\]
+
+\[
+\dot A=A\Omega
+\]
+
+and, for central internal forces,
+
+\[
+\dot\Omega = \operatorname{skew} \left[ A^T \left( \sum_i f_i y_i^T \right) C^{-1} \right].
+\]
+
+where
+
+\[
+C=\sum_i m_i y_i y_i^T.
+\]
+
+The particle positions can then be recovered from
+
+\[
+x_i=b+Ay_i.
+\]
+
+Their accelerations are
+
+\[
+\ddot x_i = \ddot b+\ddot A y_i,
+\]
+
+with
+
+\[
+\ddot A = A(\dot\Omega+\Omega^2).
+\]
+
+\section{Relation to the conventional inertia tensor}
+
+The matrix \(C\) is not itself the conventional inertia tensor. The body-frame inertia tensor is
+
+\[
+I = \sum_i m_i \left[ (y_i^Ty_i)I_3-y_i y_i^T \right].
+\]
+
+Using
+
+\[
+\operatorname{tr}(C) = \sum_i m_i y_i^Ty_i,
+\]
+
+we can write
+
+\[
+I = \operatorname{tr}(C)I_3-C.
+\]
+
+Thus \(C\) and the usual inertia tensor contain the same information.
+
+If
+
+\[
+\Omega=\widehat{\omega},
+\]
+
+then the matrix equation above is equivalent to Euler's rigid-body equation
+
+\[
+I\dot\omega+\omega\times(I\omega)=\tau,
+\]
+
+where the body-frame torque is
+
+\[
+\tau = A^T \sum_i(Ay_i)\times f_i.
+\]
+
+The matrix formulation is therefore not a different physical model;
+it is the same rigid-body dynamics expressed directly in terms of the rotation matrix and the discrete-mass representation.
+
+
+\section{Final note}
+
+A useful implementation detail is that I would integrate \(A\) and \(\Omega\), rather than \(\ddot A\).
+The constraint \(A^TA=I\) then reduces the rotational state to three angular-velocity variables,
+and you can enforce \(A\in SO(3)\) numerically using a rotation-preserving update (or quaternions)
+rather than allowing nine independently integrated entries of \(A\) to drift.
+\end{document}
