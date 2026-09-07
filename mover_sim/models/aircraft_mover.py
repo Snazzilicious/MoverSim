@@ -449,10 +449,18 @@ class Aircraft6DOFAutopilot(Controller):
 class FixedWingMover(TranslationalMover, IntegratedMover):
     """Rigid-body aircraft mover with translational, attitude, and body-rate state."""
 
-    class OrientationCorrectionEvent :
+    class OrientationCorrectionEvent(Event) :
         """Periodically forcibly renormalizes orientation value in the engine's context. 
         """
-        pass
+        def __init__( self, time ):
+            super().__init__(self, time, self.fix_orientation, name="FixedWingOrientationCorrection", interval=1.0):
+        
+        def fix_orientation( self, engine ):
+            # TODO For all FixedWingMovers...
+            orientation = engine.context.state[orientation_slice].reshape((3,3))
+            orientation = renormalize_basis( orientation )
+            engine.context.state[orientation_slice] = orientation.reshape(-1)
+
 
     def __init__(
         self,
@@ -461,12 +469,8 @@ class FixedWingMover(TranslationalMover, IntegratedMover):
         initial_orientation=None,
         initial_body_rates=None,
         mass=10000.0,
-        inertia=None,
-        frontal_area=10.0,
-        lifting_area=30.0,
-        side_area=20.0,
+        rotational_mass=None,
         t_max=80000.0,
-        angular_damping=None,
         use_coriolis=True,
     ):
         """
@@ -477,15 +481,12 @@ class FixedWingMover(TranslationalMover, IntegratedMover):
                 an orientation is derived from the initial velocity and local vertical.
             initial_body_rates: Optional time derivatives of initial_orientation.
             mass: Vehicle mass in kg.
-            inertia: Body inertia as a `(3, 3)` tensor or `(3,)` principal moments.
-            area: Reference area in m^2 used for lift.
-            ldr: Lift to drag ratio.
+            rotational_mass: Body inertia as a `(3, 3)` tensor or `(3,)` principal moments.
             t_max: Maximum thrust in Newtons.
-            angular_damping: Per-axis angular damping coefficients.
             use_coriolis: If True, include Coriolis acceleration in world-frame translation.
 
         State layout:
-            [x, y, z, vx, vy, vz, o11, ..., o33, o11', ..., o33']
+            [x, y, z, vx, vy, vz, o11, ..., o33, w1, w2, w3]
         """
 
         self.initial_orientation = renormalize_basis( initial_orientation )
@@ -495,33 +496,46 @@ class FixedWingMover(TranslationalMover, IntegratedMover):
         self.roll_cmd = 0.0
         self.pitch_cmd = 0.0
         self.yaw_cmd = 0.0
-    
+
+    def get_orientation_slice(self):
+        return slice(6, 15)
+
+    @property
+    def orientation(self):
+        return self.get_state()[self.get_orientation_slice()]
+
+    def get_omega_slice(self):
+        return slice(15, 18)
+
     def _thrust_vector( self, forward ):
         return ( self.thrust_cmd / 100.0 ) * self.max_thrust * forward
     
     def _drag_vector( self, forward ):
         raise NotImplementedError
     
-    def _lift_vector( self, up, ... ):
+    def _lift_vector( self, up ):
         raise NotImplementedError
     
     def _slip_vector( self, right ):
         raise NotImplementedError
     
-    def _roll_torque( self, forward, roll_rate ):
-        torque = ( self.roll_cmd / 100.0 ) * self.max_roll_torque
-        torque *= ( self.max_roll_rate - roll_rate ) / self.max_roll_rate
-        return torque * forward
+    def _roll_force( self, up, right ):
+        """Applies force in up direction at position 1.0*right
+        """
+        raise NotImplementedError
+        return magnitude * np.outer( up, right )
     
-    def _pitch_torque( self, right, aoa ):
-        torque = ( self.pitch_cmd / 100.0 ) * self.max_pitch_torque
-        torque *= ( self.max_aoa - aoa ) / self.max_aoa
-        return torque * right
+    def _pitch_force( self, up, forward ):
+        """Applies force in up direction at position 1.0*forward
+        """
+        raise NotImplementedError
+        return magnitude * np.outer( up, forward )
     
-    def _yaw_torque( self, up, slip_angle ):
-        torque = ( self.yaw_cmd / 100.0 ) * self.max_yaw_torque
-        torque *= ( self.max_slip_angle - slip_angle ) / self.max_slip_angle
-        return torque * up
+    def _yaw_force( self, right, forward ):
+        """Applies force in right direction at position 1.0*forward
+        """
+        raise NotImplementedError
+        return magnitude * np.outer( right, forward )
     
 
     def compute_state_derivative(self, t, state):
@@ -530,7 +544,8 @@ class FixedWingMover(TranslationalMover, IntegratedMover):
         vel = state[self.get_velocity_slice()]
         orientation = state[self.get_orientation_slice()].reshape((3,3))
         orientation = renormalize_basis( orientation )
-        body_rates = state[self.get_body_rate_slice()].reshape((3,3))
+        omega = state[self.get_omega_slice()]
+        omega = vector_to_skew_symmetric( omega )
 
         forward = orientation[:,0]
         right = orientation[:,1]
@@ -538,12 +553,12 @@ class FixedWingMover(TranslationalMover, IntegratedMover):
 
         # trivial derivatives
         dpos = vel
-        dorientation = body_rates
+        dorientation = orientation @ omega
 
         # Body acceleration
         body_force = self._thrust_vector( forward )
         body_force += self._drag_vector( forward )
-        body_force += self._lift_vector( up, ... )
+        body_force += self._lift_vector( up )
         body_force += self._slip_vector( right )
 
         accel = gravity(pos)
@@ -553,10 +568,21 @@ class FixedWingMover(TranslationalMover, IntegratedMover):
         dvel = accel + body_force / self.mass
 
         # Rotational acceleration
-        # TODO
-        # include coriolis rotation
+        rotational_force = self._roll_force( up, right )
+        rotational_force = self._pitch_force( up, forward )
+        rotational_force = self._yaw_force( right, forward )
 
-        return np.concatenate([dpos, dvel, dorientation.reshape(-1), dbody_rates.reshape(-1)])
+        if use_coriolis:
+            # TODO
+            # include coriolis rotation
+            pass
+
+        domega = orientation.T @ rotation_force
+        domega = np.linalg.solve( self.rotational_mass.T, domega.T ).T
+        domega = 0.5 * ( domega - domega.T )
+        domega = skew_symmetric_to_vector( domega )
+
+        return np.concatenate([dpos, dvel, dorientation.reshape(-1), domega])
 
 
 class FixedWingAutopilot(Controller):

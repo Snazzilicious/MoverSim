@@ -3,7 +3,7 @@
     * Coriolis update
         * must include orientation change
     * Standard damping & equilibrium dynamics for control axes
-    * Restoring forces
+        * Also restoring forces
     * Fixed wing mover
     * Fixed wing autopilot
         * Intelligence to pick the appropriate inputs
