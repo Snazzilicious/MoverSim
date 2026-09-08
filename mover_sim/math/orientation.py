@@ -180,12 +180,21 @@ def build_aircraft_body_axes(path_tangent, local_vertical, curvature_vector=None
     up = _normalize_vector(np.cross(forward, right), "up_axis")
     return forward, right, up
 
+def project_to_rotation_matrix(basis):
+    """Project a near-rotation matrix onto `SO(3)`.
 
-def renormalize_basis( basis ):
-    """Returns the nearest unitary matrix to the provided matrix
+    Returns the closest proper rotation matrix in the Frobenius norm sense.
     """
+    basis = np.asarray(basis, dtype=float)
+    if basis.shape != (3, 3):
+        raise ValueError(f"basis must have shape (3, 3), got {basis.shape}")
+
     u, _, vh = np.linalg.svd(basis)
-    return u @ vh
+    rotation = u @ vh
+    if np.linalg.det(rotation) < 0.0:
+        u[:, -1] *= -1.0
+        rotation = u @ vh
+    return rotation
 
 def vector_to_skew_symmetric(omega):
     """Convert a 3D angular velocity vector [p, q, r] to a skew-symmetric matrix."""

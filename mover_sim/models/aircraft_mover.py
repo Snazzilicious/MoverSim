@@ -7,9 +7,9 @@ from mover_sim.math.coordinates import ecef_to_lla, ecef_to_enu, lla_to_ecef
 from mover_sim.math.orientation import (
     build_aircraft_body_axes,
     normalize_quaternion,
+    project_to_rotation_matrix,
     quaternion_derivative_from_body_rates,
     quaternion_from_basis,
-    renormalize_basis,
     rotate_vector_by_quaternion,
     skew_symmetric_to_vector,
     vector_to_skew_symmetric,
@@ -454,16 +454,32 @@ class FixedWingMover(TranslationalMover, IntegratedMover):
     """Rigid-body aircraft mover with translational, attitude, and body-rate state."""
 
     class OrientationCorrectionEvent(Event) :
-        """Periodically forcibly renormalizes orientation value in the engine's context. 
+        """Periodically projects a mover's committed orientation back onto `SO(3)`.
         """
-        def __init__( self ):
-            super().__init__(0.0, self.fix_orientation, name="FixedWingOrientationCorrection", interval=1.0)
+        def __init__(self, mover, interval=1.0):
+            self.mover = mover
+            mover_name = mover.platform.id if mover.platform is not None else str(id(mover))
+            super().__init__(
+                0.0,
+                self.fix_orientation,
+                name=f"FixedWingOrientationCorrection_{mover_name}",
+                interval=interval,
+            )
         
-        def fix_orientation( self, engine ):
-            # TODO For all FixedWingMovers...
-            orientation = engine.context.state[orientation_slice].reshape((3,3))
-            orientation = renormalize_basis( orientation )
-            engine.context.state[orientation_slice] = orientation.reshape(-1)
+        def fix_orientation(self, engine):
+            if self.mover._context is not engine.context:
+                return
+            if self.mover not in engine.context._index_map:
+                return
+
+            mover_slice = engine.context.get_state_slice(self.mover)
+            orientation_slice = self.mover.get_orientation_slice()
+            start = mover_slice.start + orientation_slice.start
+            stop = mover_slice.start + orientation_slice.stop
+
+            orientation = engine.context.committed_y[start:stop].reshape((3, 3))
+            corrected = project_to_rotation_matrix(orientation)
+            engine.context.committed_y[start:stop] = corrected.reshape(-1)
 
 
     def __init__(
@@ -476,6 +492,7 @@ class FixedWingMover(TranslationalMover, IntegratedMover):
         rotational_mass=None,
         t_max=80000.0,
         use_coriolis=True,
+        correction_interval=1.0,
     ):
         """
         Parameters:
@@ -488,6 +505,8 @@ class FixedWingMover(TranslationalMover, IntegratedMover):
             rotational_mass: Body inertia as a `(3, 3)` tensor or `(3,)` principal moments.
             t_max: Maximum thrust in Newtons.
             use_coriolis: If True, include Coriolis acceleration in world-frame translation.
+            correction_interval: Period for projecting the orientation matrix back onto
+                `SO(3)`. Set to None or <= 0 to disable periodic correction.
 
         State layout:
             [x, y, z, vx, vy, vz, o11, ..., o33, w1, w2, w3]
@@ -518,9 +537,7 @@ class FixedWingMover(TranslationalMover, IntegratedMover):
             initial_orientation = np.asarray(initial_orientation, dtype=float)
             if initial_orientation.shape != (3, 3):
                 raise ValueError("initial_orientation must have shape (3, 3)")
-            initial_orientation = renormalize_basis(initial_orientation)
-            if np.linalg.det(initial_orientation) <= 0.0:
-                raise ValueError("initial_orientation must be right-handed")
+            initial_orientation = project_to_rotation_matrix(initial_orientation)
 
         state = np.concatenate([
             initial_position,
@@ -536,12 +553,25 @@ class FixedWingMover(TranslationalMover, IntegratedMover):
         self.max_thrust = float(t_max)
         self.t_max = self.max_thrust
         self.use_coriolis = bool(use_coriolis)
+        self.correction_interval = correction_interval
+        self._orientation_correction_initialized = False
 
         # All 0-100
         self.thrust_cmd = 0.0
         self.roll_cmd = 0.0
         self.pitch_cmd = 0.0
         self.yaw_cmd = 0.0
+
+    def initialize(self, engine):
+        if self._orientation_correction_initialized:
+            return
+        if self.correction_interval is None or self.correction_interval <= 0.0:
+            self._orientation_correction_initialized = True
+            return
+
+        event = self.OrientationCorrectionEvent(self, interval=self.correction_interval)
+        engine.schedule(engine.t, event.callback, name=event.name, interval=event.interval)
+        self._orientation_correction_initialized = True
 
     def _derive_orientation_from_velocity(self, position, velocity):
         speed = np.linalg.norm(velocity)
@@ -551,7 +581,7 @@ class FixedWingMover(TranslationalMover, IntegratedMover):
         pos_norm = np.linalg.norm(position)
         local_vertical = position / pos_norm if pos_norm > 1e-8 else np.array([0.0, 0.0, 1.0])
         forward, right, up = build_aircraft_body_axes(velocity, local_vertical)
-        return renormalize_basis(np.column_stack([forward, right, up]))
+        return project_to_rotation_matrix(np.column_stack([forward, right, up]))
 
     def _coerce_rotational_mass(self, rotational_mass):
         if rotational_mass is None:
@@ -622,7 +652,7 @@ class FixedWingMover(TranslationalMover, IntegratedMover):
         pos = state[self.get_position_slice()]
         vel = state[self.get_velocity_slice()]
         orientation = state[self.get_orientation_slice()].reshape((3,3))
-        orientation = renormalize_basis( orientation )
+        orientation = project_to_rotation_matrix(orientation)
         omega = state[self.get_omega_slice()]
         omega = vector_to_skew_symmetric( omega )
 
