@@ -2,7 +2,7 @@ import numpy as np
 from mover_sim.core.mover import IntegratedMover, TranslationalMover, TranslationalIntegratedMover
 from mover_sim.core.controller import Controller
 from mover_sim.core.engine import Event
-from mover_sim.math.physics import aerodynamic_drag_force, air_density, coriolis_acceleration, gravity, GM
+from mover_sim.math.physics import aerodynamic_drag_force, air_density, centrifugal_acceleration, coriolis_acceleration, coriolis_vector, gravity, GM
 from mover_sim.math.coordinates import ecef_to_lla, ecef_to_enu, lla_to_ecef
 from mover_sim.math.orientation import (
     build_aircraft_body_axes,
@@ -653,8 +653,10 @@ class FixedWingMover(TranslationalMover, IntegratedMover):
         # trivial derivatives
         dpos = vel
         dorientation = orientation @ omega
-        if use_coriolis:
-            # include coriolis rotation
+        if self.use_coriolis:
+            # The attitude state evolves in ECEF, which is itself a rotating frame.
+            # Subtract the frame rotation so `dorientation` reflects body motion
+            # relative to Earth-fixed coordinates rather than inertial-space spin.
             coriolis = vector_to_skew_symmetric( coriolis_vector() )
             dorientation -= coriolis
 
@@ -665,7 +667,7 @@ class FixedWingMover(TranslationalMover, IntegratedMover):
         body_force += self._slip_vector( right )
 
         accel = gravity(pos)
-        if use_coriolis:
+        if self.use_coriolis:
             accel += centrifugal_acceleration( pos )
             accel += coriolis_acceleration( vel )
 
@@ -678,7 +680,7 @@ class FixedWingMover(TranslationalMover, IntegratedMover):
         rotational_force += self._nose_restoring_force( forward, vel )
         rotational_force += self._roll_restoring_force( up, vel )
 
-        domega = orientation.T @ rotation_force
+        domega = orientation.T @ rotational_force
         domega = np.linalg.solve( self.rotational_mass.T, domega.T ).T
         domega = 0.5 * ( domega - domega.T )
         domega = skew_symmetric_to_vector( domega )

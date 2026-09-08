@@ -44,6 +44,30 @@ def coriolis_acceleration(vel_ecef):
     az = 0.0
     return np.array([ax, ay, az])
 
+
+def coriolis_vector():
+    """Return the angular-velocity vector of the rotating ECEF frame.
+
+    This is not a Coriolis acceleration term. It is the Earth rotation vector used when
+    a rotational kinematics equation needs to account for the fact that ECEF itself is a
+    rotating frame rather than an inertial frame.
+    """
+    return np.array([0.0, 0.0, OMEGA_E])
+
+
+def centrifugal_acceleration(pos_ecef):
+    """Calculate the centrifugal acceleration vector in ECEF.
+
+    In the rotating Earth-fixed frame this is `-omega x (omega x r)` for the Earth
+    rotation vector `omega = [0, 0, OMEGA_E]`.
+    """
+    r = np.asarray(pos_ecef, dtype=float)
+    return np.array([
+        (OMEGA_E ** 2) * r[0],
+        (OMEGA_E ** 2) * r[1],
+        0.0,
+    ])
+
 def air_density(alt_m):
     """
     Calculate atmospheric density at a given altitude using an exponential model.

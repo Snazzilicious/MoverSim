@@ -1,13 +1,13 @@
 
 ### FixedWingMover
 
-* Correction event
-    * replace renormalize with project to rotation?
-* undefined references in compute_state_derivative
 * force models missing
     * need damping model
 * Autopilot is just a stub
-
+Tests
+    All methods
+    project_to_SO(3)
+    centrifugal force
 
 ### Grand TODO
 
