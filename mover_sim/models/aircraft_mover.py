@@ -492,7 +492,6 @@ class FixedWingMover(TranslationalMover, IntegratedMover):
         rotational_mass=None,
         t_max=80000.0,
         use_coriolis=True,
-        correction_interval=1.0,
     ):
         """
         Parameters:
@@ -505,8 +504,6 @@ class FixedWingMover(TranslationalMover, IntegratedMover):
             rotational_mass: Body inertia as a `(3, 3)` tensor or `(3,)` principal moments.
             t_max: Maximum thrust in Newtons.
             use_coriolis: If True, include Coriolis acceleration in world-frame translation.
-            correction_interval: Period for projecting the orientation matrix back onto
-                `SO(3)`. Set to None or <= 0 to disable periodic correction.
 
         State layout:
             [x, y, z, vx, vy, vz, o11, ..., o33, w1, w2, w3]
@@ -553,8 +550,6 @@ class FixedWingMover(TranslationalMover, IntegratedMover):
         self.max_thrust = float(t_max)
         self.t_max = self.max_thrust
         self.use_coriolis = bool(use_coriolis)
-        self.correction_interval = correction_interval
-        self._orientation_correction_initialized = False
 
         # All 0-100
         self.thrust_cmd = 0.0
@@ -562,16 +557,11 @@ class FixedWingMover(TranslationalMover, IntegratedMover):
         self.pitch_cmd = 0.0
         self.yaw_cmd = 0.0
 
-    def initialize(self, engine):
-        if self._orientation_correction_initialized:
-            return
-        if self.correction_interval is None or self.correction_interval <= 0.0:
-            self._orientation_correction_initialized = True
-            return
-
-        event = self.OrientationCorrectionEvent(self, interval=self.correction_interval)
+    def add_orientation_correction_event(self, engine, interval=1.0):
+        """Schedule a recurring event that projects the committed orientation onto `SO(3)`."""
+        event = self.OrientationCorrectionEvent(self, interval=interval)
         engine.schedule(engine.t, event.callback, name=event.name, interval=event.interval)
-        self._orientation_correction_initialized = True
+        return event
 
     def _derive_orientation_from_velocity(self, position, velocity):
         speed = np.linalg.norm(velocity)
