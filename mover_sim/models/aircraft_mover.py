@@ -502,7 +502,7 @@ class FixedWingMover(TranslationalMover, IntegratedMover):
 
     @property
     def orientation(self):
-        return self.get_state()[self.get_orientation_slice()]
+        return self.get_state()[self.get_orientation_slice()].reshape((3,3))
 
     def get_omega_slice(self):
         return slice(15, 18)
@@ -517,6 +517,8 @@ class FixedWingMover(TranslationalMover, IntegratedMover):
         raise NotImplementedError
     
     def _slip_vector( self, right ):
+        """Sideways force due to yaw
+        """
         raise NotImplementedError
     
     def _roll_force( self, up, right ):
@@ -537,6 +539,17 @@ class FixedWingMover(TranslationalMover, IntegratedMover):
         raise NotImplementedError
         return magnitude * np.outer( right, forward )
     
+    def _nose_restoring_force( self, forward, velocity ):
+        """Stabilizing force which pulls the nose in line with the velocity
+        """
+        raise NotImplementedError
+    
+    def _roll_restoring_force( self, up, velocity ):
+        """Stabilizing force which pulls the wings perpendicular with the velocity
+        """
+        raise NotImplementedError
+        return magnitude * np.outer( up, right )
+    
 
     def compute_state_derivative(self, t, state):
         # unpack current state
@@ -554,6 +567,10 @@ class FixedWingMover(TranslationalMover, IntegratedMover):
         # trivial derivatives
         dpos = vel
         dorientation = orientation @ omega
+        if use_coriolis:
+            # include coriolis rotation
+            coriolis = vector_to_skew_symmetric( coriolis_vector() )
+            dorientation -= coriolis
 
         # Body acceleration
         body_force = self._thrust_vector( forward )
@@ -562,20 +579,18 @@ class FixedWingMover(TranslationalMover, IntegratedMover):
         body_force += self._slip_vector( right )
 
         accel = gravity(pos)
-        accel += centrifugal_acceleration(...)
-        accel += coriolis_acceleration(...)
+        if use_coriolis:
+            accel += centrifugal_acceleration( pos )
+            accel += coriolis_acceleration( vel )
 
         dvel = accel + body_force / self.mass
 
         # Rotational acceleration
         rotational_force = self._roll_force( up, right )
-        rotational_force = self._pitch_force( up, forward )
-        rotational_force = self._yaw_force( right, forward )
-
-        if use_coriolis:
-            # TODO
-            # include coriolis rotation
-            pass
+        rotational_force += self._pitch_force( up, forward )
+        rotational_force += self._yaw_force( right, forward )
+        rotational_force += self._nose_restoring_force( forward, vel )
+        rotational_force += self._roll_restoring_force( up, vel )
 
         domega = orientation.T @ rotation_force
         domega = np.linalg.solve( self.rotational_mass.T, domega.T ).T

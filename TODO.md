@@ -1,9 +1,9 @@
 
 * Redesign Aircraft movers
     * Coriolis update
-        * must include orientation change
+        * must include orientation change (just subtract earth's rotation from A')
     * Standard damping & equilibrium dynamics for control axes
-        * Also restoring forces
+        * (restoring forces)
     * Fixed wing mover
     * Fixed wing autopilot
         * Intelligence to pick the appropriate inputs
@@ -15,7 +15,11 @@
     * Remove quaternions everywhere
         * redesign AircraftSplineMover
     * Update logging
+        * mainly just ...
+            * change orientation from quaternions to fru
+            * remove body rates
     * Update plotting
+    * Update example scenarios
 * Future features (need not be added yet, but ideally not precluded)
     * despawn platform (e.g. if crashes into ground or something)
         * update ballistic missile scenario
