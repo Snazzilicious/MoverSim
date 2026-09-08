@@ -12,6 +12,7 @@
     * Ballistic mover
     * Remove old aircraft mover(s)
         * Rewrite scenarios
+        * Update AircraftSplineMover to use fru instead of quaternions 
     * Remove quaternions everywhere
         * redesign AircraftSplineMover
     * Update logging

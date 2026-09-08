@@ -1,6 +1,7 @@
 import numpy as np
 from mover_sim.core.mover import IntegratedMover, TranslationalMover, TranslationalIntegratedMover
 from mover_sim.core.controller import Controller
+from mover_sim.core.engine import Event
 from mover_sim.math.physics import aerodynamic_drag_force, air_density, coriolis_acceleration, gravity, GM
 from mover_sim.math.coordinates import ecef_to_lla, ecef_to_enu, lla_to_ecef
 from mover_sim.math.orientation import (
@@ -8,7 +9,10 @@ from mover_sim.math.orientation import (
     normalize_quaternion,
     quaternion_derivative_from_body_rates,
     quaternion_from_basis,
+    renormalize_basis,
     rotate_vector_by_quaternion,
+    skew_symmetric_to_vector,
+    vector_to_skew_symmetric,
 )
 
 class AircraftMover(TranslationalIntegratedMover):
@@ -452,8 +456,8 @@ class FixedWingMover(TranslationalMover, IntegratedMover):
     class OrientationCorrectionEvent(Event) :
         """Periodically forcibly renormalizes orientation value in the engine's context. 
         """
-        def __init__( self, time ):
-            super().__init__(self, time, self.fix_orientation, name="FixedWingOrientationCorrection", interval=1.0):
+        def __init__( self ):
+            super().__init__(0.0, self.fix_orientation, name="FixedWingOrientationCorrection", interval=1.0)
         
         def fix_orientation( self, engine ):
             # TODO For all FixedWingMovers...
@@ -479,7 +483,7 @@ class FixedWingMover(TranslationalMover, IntegratedMover):
             initial_velocity: ECEF velocity [Vx, Vy, Vz] in m/s.
             initial_orientation: Optional mover-frame forward, right, up basis matrix in ECEF. If omitted,
                 an orientation is derived from the initial velocity and local vertical.
-            initial_body_rates: Optional time derivatives of initial_orientation.
+            initial_body_rates: Optional time derivatives of initial_orientation (axis of rotation with rate as magnitude).
             mass: Vehicle mass in kg.
             rotational_mass: Body inertia as a `(3, 3)` tensor or `(3,)` principal moments.
             t_max: Maximum thrust in Newtons.
@@ -489,13 +493,75 @@ class FixedWingMover(TranslationalMover, IntegratedMover):
             [x, y, z, vx, vy, vz, o11, ..., o33, w1, w2, w3]
         """
 
-        self.initial_orientation = renormalize_basis( initial_orientation )
+        initial_position = np.asarray(initial_position, dtype=float)
+        if initial_position.shape != (3,):
+            raise ValueError("initial_position must have shape (3,)")
+
+        initial_velocity = np.asarray(initial_velocity, dtype=float)
+        if initial_velocity.shape != (3,):
+            raise ValueError("initial_velocity must have shape (3,)")
+
+        initial_body_rates = (
+            np.asarray(initial_body_rates, dtype=float)
+            if initial_body_rates is not None
+            else np.zeros(3)
+        )
+        if initial_body_rates.shape != (3,):
+            raise ValueError("initial_body_rates must have shape (3,)")
+
+        if initial_orientation is None:
+            initial_orientation = self._derive_orientation_from_velocity(
+                initial_position,
+                initial_velocity,
+            )
+        else:
+            initial_orientation = np.asarray(initial_orientation, dtype=float)
+            if initial_orientation.shape != (3, 3):
+                raise ValueError("initial_orientation must have shape (3, 3)")
+            initial_orientation = renormalize_basis(initial_orientation)
+            if np.linalg.det(initial_orientation) <= 0.0:
+                raise ValueError("initial_orientation must be right-handed")
+
+        state = np.concatenate([
+            initial_position,
+            initial_velocity,
+            initial_orientation.reshape(-1),
+            initial_body_rates,
+        ])
+        super().__init__(state)
+
+        self.mass = float(mass)
+        self.rotational_mass = self._coerce_rotational_mass(rotational_mass)
+        self.inv_rotational_mass = np.linalg.inv(self.rotational_mass)
+        self.max_thrust = float(t_max)
+        self.t_max = self.max_thrust
+        self.use_coriolis = bool(use_coriolis)
 
         # All 0-100
         self.thrust_cmd = 0.0
         self.roll_cmd = 0.0
         self.pitch_cmd = 0.0
         self.yaw_cmd = 0.0
+
+    def _derive_orientation_from_velocity(self, position, velocity):
+        speed = np.linalg.norm(velocity)
+        if speed < 1e-8:
+            return np.eye(3)
+
+        pos_norm = np.linalg.norm(position)
+        local_vertical = position / pos_norm if pos_norm > 1e-8 else np.array([0.0, 0.0, 1.0])
+        forward, right, up = build_aircraft_body_axes(velocity, local_vertical)
+        return renormalize_basis(np.column_stack([forward, right, up]))
+
+    def _coerce_rotational_mass(self, rotational_mass):
+        if rotational_mass is None:
+            rotational_mass = np.diag([8.0e4, 1.2e5, 1.0e5])
+        rotational_mass = np.asarray(rotational_mass, dtype=float)
+        if rotational_mass.shape == (3,):
+            rotational_mass = np.diag(rotational_mass)
+        if rotational_mass.shape != (3, 3):
+            raise ValueError("rotational_mass must have shape (3,) or (3, 3)")
+        return rotational_mass
 
     def get_orientation_slice(self):
         return slice(6, 15)
@@ -602,10 +668,13 @@ class FixedWingMover(TranslationalMover, IntegratedMover):
 
 class FixedWingAutopilot(Controller):
     def __init__( self, route ):
+        super().__init__()
+        self.route = route
 
     def update( self, t, engine ):
         """Adjusts thrust, roll, pitch, yaw commands to remain on course.
         """
+        return
 
 
 
@@ -618,7 +687,7 @@ class RocketMover(TranslationalMover, IntegratedMover):
         """
         pass
 
-    def __init__(self.command_direction
+    def __init__(
         self,
         initial_position,
         initial_velocity,
