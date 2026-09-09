@@ -799,7 +799,8 @@ class FixedWingAutopilot(Controller):
         """Create a waypoint-following autopilot for `FixedWingMover`.
 
         Parameters:
-            waypoints: Sequence of ECEF waypoint positions with shape `(3,)`.
+            waypoints: Sequence of ECEF waypoint positions with shape `(3,)`. This may
+                be empty to represent a route with no active waypoint targets.
             target_speed: Default target speed in m/s used while flying toward every
                 waypoint unless
                 overridden by `target_speeds`.
@@ -819,8 +820,6 @@ class FixedWingAutopilot(Controller):
             raise ValueError("max_climb_rate must be non-negative")
 
         self.waypoints = [np.asarray(wp, dtype=float) for wp in waypoints]
-        if not self.waypoints:
-            raise ValueError("waypoints must contain at least one waypoint")
         if any(wp.shape != (3,) for wp in self.waypoints):
             raise ValueError("each waypoint must have shape (3,)")
 
@@ -833,6 +832,10 @@ class FixedWingAutopilot(Controller):
         self.k_altitude = 0.05
         self.k_climb_rate = 12.0
         self.k_speed = 1.5
+        self.hold_active = False
+        self.hold_speed = None
+        self.hold_altitude = None
+        self.hold_horizontal_direction = None
 
         waypoint_count = len(self.waypoints)
         if target_speeds is None:

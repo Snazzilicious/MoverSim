@@ -603,6 +603,10 @@ def test_fixed_wing_autopilot_constructor_stores_normalized_route():
     assert autopilot.update_interval == 0.2
     assert autopilot.current_wp_idx == 0
     assert autopilot.completed is False
+    assert autopilot.hold_active is False
+    assert autopilot.hold_speed is None
+    assert autopilot.hold_altitude is None
+    assert autopilot.hold_horizontal_direction is None
 
 
 def test_fixed_wing_autopilot_constructor_accepts_per_waypoint_speeds():
@@ -628,6 +632,28 @@ def test_fixed_wing_autopilot_constructor_allows_single_waypoint_route():
 
     assert len(autopilot.waypoints) == 1
     assert autopilot.target_speeds.shape == (1,)
+    assert autopilot.hold_active is False
+
+
+def test_fixed_wing_autopilot_constructor_allows_empty_route():
+    autopilot = FixedWingAutopilot([], target_speed=170.0)
+
+    assert autopilot.waypoints == []
+    assert autopilot.target_speeds.shape == (0,)
+    assert autopilot.current_wp_idx == 0
+    assert autopilot.completed is False
+    assert autopilot.hold_active is False
+    assert autopilot.hold_speed is None
+    assert autopilot.hold_altitude is None
+    assert autopilot.hold_horizontal_direction is None
+
+
+def test_fixed_wing_autopilot_constructor_allows_empty_route_with_empty_target_speeds():
+    autopilot = FixedWingAutopilot([], target_speed=170.0, target_speeds=[])
+
+    assert autopilot.waypoints == []
+    assert autopilot.target_speeds.shape == (0,)
+    assert autopilot.hold_active is False
 
 
 def test_fixed_wing_autopilot_update_does_not_advance_outside_radius():
@@ -764,13 +790,13 @@ def test_fixed_wing_autopilot_update_zeroes_commands_when_completed():
 @pytest.mark.parametrize(
     "kwargs, message",
     [
-        ({"waypoints": []}, "at least one waypoint"),
         ({"waypoints": [np.zeros(2)]}, r"shape \(3,\)"),
         ({"waypoints": [np.zeros(3)], "target_speed": -1.0}, "target_speed"),
         ({"waypoints": [np.zeros(3)], "waypoint_radius": 0.0}, "waypoint_radius"),
         ({"waypoints": [np.zeros(3)], "max_climb_rate": -1.0}, "max_climb_rate"),
         ({"waypoints": [np.zeros(3), np.ones(3)], "target_speeds": [100.0]}, r"shape \(2,\)"),
         ({"waypoints": [np.zeros(3), np.ones(3)], "target_speeds": [100.0, -5.0]}, "non-negative"),
+        ({"waypoints": [], "target_speeds": [100.0]}, r"shape \(0,\)"),
     ],
 )
 def test_fixed_wing_autopilot_constructor_rejects_invalid_inputs(kwargs, message):
