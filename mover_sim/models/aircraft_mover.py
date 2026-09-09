@@ -787,9 +787,57 @@ class FixedWingMover(TranslationalMover, IntegratedMover):
 
 
 class FixedWingAutopilot(Controller):
-    def __init__( self, waypoints, target_speeds, max_climb_rate=4, waypoint_radius=500.0, update_interval=0.1 ):
-        super().__init__()
-        self.route = route
+    def __init__(
+        self,
+        waypoints,
+        target_speed=150.0,
+        target_speeds=None,
+        max_climb_rate=4.0,
+        waypoint_radius=500.0,
+        update_interval=0.1,
+    ):
+        """Create a waypoint-following autopilot for `FixedWingMover`.
+
+        Parameters:
+            waypoints: Sequence of ECEF waypoint positions with shape `(3,)`.
+            target_speed: Default target speed in m/s used for every route leg unless
+                overridden by `target_speeds`.
+            target_speeds: Optional per-leg speed overrides in m/s. If provided, its
+                length must be `len(waypoints) - 1`.
+            max_climb_rate: Maximum commanded climb or descent rate in m/s.
+            waypoint_radius: Distance in meters used to declare a waypoint reached.
+            update_interval: Controller execution period in seconds.
+        """
+        super().__init__(update_interval=update_interval)
+
+        if waypoint_radius <= 0.0:
+            raise ValueError("waypoint_radius must be positive")
+        if target_speed < 0.0:
+            raise ValueError("target_speed must be non-negative")
+        if max_climb_rate < 0.0:
+            raise ValueError("max_climb_rate must be non-negative")
+
+        self.waypoints = [np.asarray(wp, dtype=float) for wp in waypoints]
+        if not self.waypoints:
+            raise ValueError("waypoints must contain at least one waypoint")
+        if any(wp.shape != (3,) for wp in self.waypoints):
+            raise ValueError("each waypoint must have shape (3,)")
+
+        self.target_speed = float(target_speed)
+        self.max_climb_rate = float(max_climb_rate)
+        self.waypoint_radius = float(waypoint_radius)
+        self.current_wp_idx = 0
+        self.completed = False
+
+        leg_count = max(0, len(self.waypoints) - 1)
+        if target_speeds is None:
+            self.leg_target_speeds = np.full(leg_count, self.target_speed, dtype=float)
+        else:
+            self.leg_target_speeds = np.asarray(target_speeds, dtype=float)
+            if self.leg_target_speeds.shape != (leg_count,):
+                raise ValueError(f"target_speeds must have shape ({leg_count},)")
+            if np.any(self.leg_target_speeds < 0.0):
+                raise ValueError("target_speeds must be non-negative")
 
     def update( self, t, engine ):
         """Adjusts thrust, roll, pitch, yaw commands to remain on course.

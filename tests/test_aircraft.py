@@ -10,6 +10,7 @@ from mover_sim.models.aircraft_mover import (
     Aircraft6DOFMover,
     AircraftMover,
     AircraftAutopilot,
+    FixedWingAutopilot,
     FixedWingMover,
 )
 from mover_sim.math.coordinates import lla_to_ecef, ecef_to_enu, ecef_to_lla
@@ -579,6 +580,71 @@ def test_fixed_wing_orientation_correction_event_projects_committed_state():
     corrected = engine.context.committed_y[start:stop].reshape((3, 3))
     assert np.allclose(corrected.T @ corrected, np.eye(3), atol=1e-7)
     assert np.isclose(np.linalg.det(corrected), 1.0, atol=1e-7)
+
+
+def test_fixed_wing_autopilot_constructor_stores_normalized_route():
+    wp1 = lla_to_ecef(0.0, 0.00, 2000.0)
+    wp2 = lla_to_ecef(0.0, 0.02, 2200.0)
+    wp3 = lla_to_ecef(0.0, 0.04, 2400.0)
+
+    autopilot = FixedWingAutopilot(
+        [list(wp1), list(wp2), list(wp3)],
+        target_speed=180.0,
+        waypoint_radius=750.0,
+        update_interval=0.2,
+    )
+
+    assert len(autopilot.waypoints) == 3
+    assert all(isinstance(wp, np.ndarray) and wp.shape == (3,) for wp in autopilot.waypoints)
+    assert np.allclose(autopilot.leg_target_speeds, [180.0, 180.0])
+    assert autopilot.target_speed == 180.0
+    assert autopilot.max_climb_rate == 4.0
+    assert autopilot.waypoint_radius == 750.0
+    assert autopilot.update_interval == 0.2
+    assert autopilot.current_wp_idx == 0
+    assert autopilot.completed is False
+
+
+def test_fixed_wing_autopilot_constructor_accepts_per_leg_speeds():
+    wp1 = lla_to_ecef(0.0, 0.00, 2000.0)
+    wp2 = lla_to_ecef(0.0, 0.02, 2200.0)
+    wp3 = lla_to_ecef(0.0, 0.04, 2400.0)
+
+    autopilot = FixedWingAutopilot(
+        [wp1, wp2, wp3],
+        target_speed=180.0,
+        target_speeds=[160.0, 210.0],
+        max_climb_rate=6.0,
+    )
+
+    assert np.allclose(autopilot.leg_target_speeds, [160.0, 210.0])
+    assert autopilot.max_climb_rate == 6.0
+
+
+def test_fixed_wing_autopilot_constructor_allows_single_waypoint_route():
+    wp = lla_to_ecef(0.0, 0.00, 2000.0)
+
+    autopilot = FixedWingAutopilot([wp], target_speed=170.0)
+
+    assert len(autopilot.waypoints) == 1
+    assert autopilot.leg_target_speeds.shape == (0,)
+
+
+@pytest.mark.parametrize(
+    "kwargs, message",
+    [
+        ({"waypoints": []}, "at least one waypoint"),
+        ({"waypoints": [np.zeros(2)]}, r"shape \(3,\)"),
+        ({"waypoints": [np.zeros(3)], "target_speed": -1.0}, "target_speed"),
+        ({"waypoints": [np.zeros(3)], "waypoint_radius": 0.0}, "waypoint_radius"),
+        ({"waypoints": [np.zeros(3)], "max_climb_rate": -1.0}, "max_climb_rate"),
+        ({"waypoints": [np.zeros(3), np.ones(3)], "target_speeds": [100.0, 120.0]}, r"shape \(1,\)"),
+        ({"waypoints": [np.zeros(3), np.ones(3)], "target_speeds": [-5.0]}, "non-negative"),
+    ],
+)
+def test_fixed_wing_autopilot_constructor_rejects_invalid_inputs(kwargs, message):
+    with pytest.raises(ValueError, match=message):
+        FixedWingAutopilot(**kwargs)
 
 
 def test_fixed_wing_aerodynamic_force_generates_lift_for_positive_alpha():
