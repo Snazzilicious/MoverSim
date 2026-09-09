@@ -829,6 +829,10 @@ class FixedWingAutopilot(Controller):
         self.waypoint_radius = float(waypoint_radius)
         self.current_wp_idx = 0
         self.completed = False
+        self.k_heading = 100.0 / np.radians(60.0)
+        self.k_altitude = 0.05
+        self.k_climb_rate = 12.0
+        self.k_speed = 1.5
 
         waypoint_count = len(self.waypoints)
         if target_speeds is None:
@@ -849,6 +853,10 @@ class FixedWingAutopilot(Controller):
 
         if self.current_wp_idx >= len(self.waypoints):
             self.completed = True
+            mover.thrust_cmd = 0.0
+            mover.roll_cmd = 0.0
+            mover.pitch_cmd = 0.0
+            mover.yaw_cmd = 0.0
             return
         self.completed = False
 
@@ -865,17 +873,58 @@ class FixedWingAutopilot(Controller):
         # Guidance-command logic only runs while there is still an active target waypoint.
         if self.current_wp_idx >= len(self.waypoints):
             self.completed = True
+            mover.thrust_cmd = 0.0
+            mover.roll_cmd = 0.0
+            mover.pitch_cmd = 0.0
+            mover.yaw_cmd = 0.0
             return
 
-        # If no more waypoints, should maintain straight and level at last speed
+        vel = mover.velocity
+        speed = np.linalg.norm(vel)
+        local_up = pos / max(np.linalg.norm(pos), 1e-6)
+        wp_target = self.waypoints[self.current_wp_idx]
+        target_speed = self.target_speeds[self.current_wp_idx]
 
-        # Gets to next waypoint's altitude asap, subject to +/-max_climb_rate
-        # Then stays at it
+        # Steer by comparing the current horizontal flight direction to the horizontal
+        # direction from the aircraft to the active waypoint.
+        rel_pos = wp_target - pos
+        rel_horizontal = rel_pos - np.dot(rel_pos, local_up) * local_up
+        vel_horizontal = vel - np.dot(vel, local_up) * local_up
+        rel_horizontal_norm = np.linalg.norm(rel_horizontal)
+        vel_horizontal_norm = np.linalg.norm(vel_horizontal)
+        if rel_horizontal_norm > 1e-6 and vel_horizontal_norm > 1e-6:
+            desired_horizontal = rel_horizontal / rel_horizontal_norm
+            current_horizontal = vel_horizontal / vel_horizontal_norm
+            heading_error = np.arctan2(
+                np.dot(np.cross(current_horizontal, desired_horizontal), local_up),
+                np.clip(np.dot(current_horizontal, desired_horizontal), -1.0, 1.0),
+            )
+        else:
+            heading_error = 0.0
 
-        # Gets to next waypoint's target_speed asap
-        # Then stays at it
+        # Convert altitude error into a bounded climb-rate target, then use pitch to
+        # drive the actual climb rate toward that target.
+        vertical_error = np.dot(rel_pos, local_up)
+        desired_climb_rate = np.clip(
+            self.k_altitude * vertical_error,
+            -self.max_climb_rate,
+            self.max_climb_rate,
+        )
+        actual_climb_rate = np.dot(vel, local_up)
+        climb_rate_error = desired_climb_rate - actual_climb_rate
 
-        # Maintains heading to next waypoint
+        # Use aerodynamic drag as a crude trim-thrust estimate so the proportional speed
+        # controller only needs to correct the difference to the waypoint speed target.
+        _, _, alt = ecef_to_lla(pos[0], pos[1], pos[2])
+        drag_force_mag = np.linalg.norm(aerodynamic_drag_force(vel, alt, mover.cd0, mover.area))
+        thrust_trim = 100.0 * drag_force_mag / max(mover.max_thrust, 1e-6)
+
+        # Keep the first-pass controller simple: roll for heading, pitch for climb rate,
+        # thrust for speed, and leave yaw neutral while airframe stability damps slip.
+        mover.roll_cmd = np.clip(self.k_heading * heading_error, -100.0, 100.0)
+        mover.pitch_cmd = np.clip(self.k_climb_rate * climb_rate_error, -100.0, 100.0)
+        mover.thrust_cmd = np.clip(thrust_trim + self.k_speed * (target_speed - speed), 0.0, 100.0)
+        mover.yaw_cmd = 0.0
 
         return
 

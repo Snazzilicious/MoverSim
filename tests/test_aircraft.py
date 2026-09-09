@@ -692,6 +692,75 @@ def test_fixed_wing_autopilot_update_advances_through_multiple_waypoints_and_com
     ]
 
 
+def test_fixed_wing_autopilot_update_generates_guidance_commands():
+    pos = lla_to_ecef(0.0, 0.0, 2000.0)
+    vel = np.array([0.0, 180.0, 0.0])
+    wp = lla_to_ecef(0.02, 0.0, 2400.0)
+
+    mover = FixedWingMover(pos, vel, use_coriolis=False)
+    autopilot = FixedWingAutopilot([wp], target_speed=220.0, waypoint_radius=100.0)
+    engine = SimulationEngine()
+    engine.register_platform(Platform("fixed_wing_route", mover, autopilot))
+
+    autopilot.update(0.0, engine)
+
+    assert abs(mover.roll_cmd) > 0.0
+    assert mover.pitch_cmd > 0.0
+    assert mover.thrust_cmd > 0.0
+    assert mover.yaw_cmd == 0.0
+    assert abs(mover.roll_cmd) <= 100.0
+    assert abs(mover.pitch_cmd) <= 100.0
+    assert 0.0 <= mover.thrust_cmd <= 100.0
+
+
+def test_fixed_wing_autopilot_update_uses_active_waypoint_speed_target_after_advancement():
+    pos = lla_to_ecef(0.0, 0.0, 2000.0)
+    vel = np.array([0.0, 180.0, 0.0])
+    wp1 = pos
+    wp2 = lla_to_ecef(0.0, 0.02, 2000.0)
+
+    low_speed_mover = FixedWingMover(pos, vel, use_coriolis=False)
+    high_speed_mover = FixedWingMover(pos, vel, use_coriolis=False)
+    low_speed_autopilot = FixedWingAutopilot([wp1, wp2], target_speeds=[220.0, 100.0], waypoint_radius=100.0)
+    high_speed_autopilot = FixedWingAutopilot([wp1, wp2], target_speeds=[220.0, 260.0], waypoint_radius=100.0)
+
+    low_speed_engine = SimulationEngine()
+    high_speed_engine = SimulationEngine()
+    low_speed_engine.register_platform(Platform("fixed_wing_low", low_speed_mover, low_speed_autopilot))
+    high_speed_engine.register_platform(Platform("fixed_wing_high", high_speed_mover, high_speed_autopilot))
+
+    low_speed_autopilot.update(0.0, low_speed_engine)
+    high_speed_autopilot.update(0.0, high_speed_engine)
+
+    assert low_speed_autopilot.current_wp_idx == 1
+    assert high_speed_autopilot.current_wp_idx == 1
+    assert low_speed_mover.thrust_cmd < high_speed_mover.thrust_cmd
+
+
+def test_fixed_wing_autopilot_update_zeroes_commands_when_completed():
+    pos = lla_to_ecef(0.0, 0.0, 2000.0)
+    vel = np.array([0.0, 180.0, 0.0])
+    wp = lla_to_ecef(0.0, 0.02, 2000.0)
+
+    mover = FixedWingMover(pos, vel, use_coriolis=False)
+    mover.thrust_cmd = 50.0
+    mover.roll_cmd = 25.0
+    mover.pitch_cmd = -10.0
+    mover.yaw_cmd = 5.0
+    autopilot = FixedWingAutopilot([wp], target_speed=220.0, waypoint_radius=100.0)
+    autopilot.current_wp_idx = len(autopilot.waypoints)
+    engine = SimulationEngine()
+    engine.register_platform(Platform("fixed_wing_route", mover, autopilot))
+
+    autopilot.update(0.0, engine)
+
+    assert autopilot.completed is True
+    assert mover.thrust_cmd == 0.0
+    assert mover.roll_cmd == 0.0
+    assert mover.pitch_cmd == 0.0
+    assert mover.yaw_cmd == 0.0
+
+
 @pytest.mark.parametrize(
     "kwargs, message",
     [
