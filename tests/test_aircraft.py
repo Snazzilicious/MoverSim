@@ -1002,6 +1002,89 @@ def test_fixed_wing_autopilot_update_uses_hold_mode_when_already_completed():
     assert mover.yaw_cmd == 0.0
 
 
+def test_fixed_wing_autopilot_empty_route_accelerates_toward_target_speed():
+    engine = SimulationEngine()
+    engine.max_step = 0.01
+
+    pos = lla_to_ecef(0.0, 0.0, 2000.0)
+    vel = np.array([0.0, 180.0, 0.0])
+    mover = FixedWingMover(pos, vel, use_coriolis=False)
+    autopilot = FixedWingAutopilot([], target_speed=220.0, update_interval=0.05)
+    initial_speed = np.linalg.norm(mover.velocity)
+
+    engine.register_platform(Platform("fixed_wing_hold", mover, autopilot))
+    engine.run(1.0)
+
+    assert autopilot.completed is True
+    assert autopilot.hold_active is True
+    assert mover.thrust_cmd > 0.0
+    assert np.linalg.norm(mover.velocity) > initial_speed
+
+
+def test_fixed_wing_autopilot_completed_route_maintains_hold_commands_during_run():
+    engine = SimulationEngine()
+    engine.max_step = 0.01
+
+    pos = lla_to_ecef(0.0, 0.0, 2000.0)
+    vel = np.array([0.0, 180.0, 0.0])
+    mover = FixedWingMover(pos, vel, use_coriolis=False)
+    autopilot = FixedWingAutopilot([pos], target_speeds=[210.0], waypoint_radius=100.0, update_interval=0.05)
+
+    engine.register_platform(Platform("fixed_wing_hold", mover, autopilot))
+    engine.run(1.0)
+
+    assert autopilot.current_wp_idx == 1
+    assert autopilot.completed is True
+    assert autopilot.hold_active is True
+    assert autopilot.hold_speed == 210.0
+    assert mover.thrust_cmd > 0.0
+    assert mover.yaw_cmd == 0.0
+
+
+def test_fixed_wing_autopilot_empty_route_preserves_heading_and_altitude_better_than_zero_commands():
+    initial_pos = lla_to_ecef(0.0, 0.0, 2000.0)
+    initial_vel = np.array([0.0, 180.0, 0.0])
+    base_mover = FixedWingMover(initial_pos, initial_vel, use_coriolis=False)
+    disturbed_orientation = (
+        base_mover.orientation
+        @ _rotation_about_body_forward(np.radians(10.0))
+        @ _rotation_about_body_right(np.radians(5.0))
+    )
+    initial_local_up = initial_pos / np.linalg.norm(initial_pos)
+    initial_horizontal = initial_vel - np.dot(initial_vel, initial_local_up) * initial_local_up
+    initial_horizontal /= np.linalg.norm(initial_horizontal)
+
+    def run_case(controller):
+        engine = SimulationEngine()
+        engine.max_step = 0.01
+        mover = FixedWingMover(
+            initial_pos,
+            initial_vel,
+            initial_orientation=disturbed_orientation,
+            use_coriolis=False,
+        )
+        engine.register_platform(Platform("fixed_wing_case", mover, controller))
+        engine.run(3.0)
+
+        local_up = mover.position / np.linalg.norm(mover.position)
+        horizontal_velocity = mover.velocity - np.dot(mover.velocity, local_up) * local_up
+        horizontal_velocity /= np.linalg.norm(horizontal_velocity)
+        heading_error = abs(np.arctan2(
+            np.dot(np.cross(horizontal_velocity, initial_horizontal), local_up),
+            np.clip(np.dot(horizontal_velocity, initial_horizontal), -1.0, 1.0),
+        ))
+        altitude_error = abs(ecef_to_lla(mover.position[0], mover.position[1], mover.position[2])[2] - 2000.0)
+        return heading_error, altitude_error
+
+    hold_heading_error, hold_altitude_error = run_case(
+        FixedWingAutopilot([], target_speed=180.0, update_interval=0.05)
+    )
+    free_heading_error, free_altitude_error = run_case(None)
+
+    assert hold_heading_error < free_heading_error
+    assert hold_altitude_error < free_altitude_error
+
+
 @pytest.mark.parametrize(
     "kwargs, message",
     [

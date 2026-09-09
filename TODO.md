@@ -1,16 +1,8 @@
 
-### FixedWingMoverAutopilot
-
-* Autopilot is just a stub
-    * Add route sequencing
-    * Add inputs logic
 
 ### Grand TODO
 
 * Redesign Aircraft movers
-    * Fixed wing autopilot
-        * tests for tracking a route
-        * Intelligence to pick the appropriate inputs
     * Rocket mover
         * fuel model
     * Rocket guidance
@@ -19,6 +11,7 @@
         * Aircraft6DOFMover, Aircraft6DOFAutopilot
         * Update AircraftSplineMover to use fru instead of quaternions 
         * Rewrite scenarios
+        * remove unused imports
     * Remove quaternions everywhere
         * redesign AircraftSplineMover
     * Update logging
