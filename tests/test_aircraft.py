@@ -10,9 +10,30 @@ from mover_sim.models.aircraft_mover import (
     Aircraft6DOFMover,
     AircraftMover,
     AircraftAutopilot,
+    FixedWingMover,
 )
 from mover_sim.math.coordinates import lla_to_ecef, ecef_to_enu, ecef_to_lla
 from mover_sim.math.orientation import rotate_vector_by_quaternion
+
+
+def _rotation_about_body_right(angle_rad):
+    c = np.cos(angle_rad)
+    s = np.sin(angle_rad)
+    return np.array([
+        [c, 0.0, -s],
+        [0.0, 1.0, 0.0],
+        [s, 0.0, c],
+    ])
+
+
+def _rotation_about_body_up(angle_rad):
+    c = np.cos(angle_rad)
+    s = np.sin(angle_rad)
+    return np.array([
+        [c, -s, 0.0],
+        [s, c, 0.0],
+        [0.0, 0.0, 1.0],
+    ])
 
 def test_aircraft_mover_initialization():
     pos = lla_to_ecef(0.0, 0.0, 5000.0)
@@ -305,3 +326,28 @@ def test_aircraft_6dof_autopilot_changes_trajectory_toward_waypoint():
     assert lon_end > lon0
     assert distance_end < distance0
     assert alt_end > alt0 - 300.0
+
+
+def test_fixed_wing_aerodynamic_force_generates_lift_for_positive_alpha():
+    pos = lla_to_ecef(0.0, 0.0, 2000.0)
+    vel = np.array([0.0, 180.0, 0.0])
+    mover = FixedWingMover(pos, vel, use_coriolis=False)
+
+    pitched_orientation = mover.orientation @ _rotation_about_body_right(np.radians(10.0))
+    aero_force = mover._aerodynamic_force(pos, vel, pitched_orientation)
+
+    assert np.dot(aero_force, pitched_orientation[:, 2]) > 0.0
+    assert np.dot(aero_force, pitched_orientation[:, 0]) < 0.0
+
+
+def test_fixed_wing_aerodynamic_force_opposes_positive_sideslip():
+    pos = lla_to_ecef(0.0, 0.0, 2000.0)
+    vel = np.array([0.0, 180.0, 0.0])
+    mover = FixedWingMover(pos, vel, use_coriolis=False)
+
+    yawed_orientation = mover.orientation @ _rotation_about_body_up(np.radians(-10.0))
+    aero_force = mover._aerodynamic_force(pos, vel, yawed_orientation)
+    lateral_velocity_body = yawed_orientation.T @ vel
+
+    assert lateral_velocity_body[1] > 0.0
+    assert np.dot(aero_force, yawed_orientation[:, 1]) < 0.0

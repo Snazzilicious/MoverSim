@@ -3,7 +3,6 @@
 
 * force models incomplete
     * need damping model
-    * body forces function of attitude relative to velocity
 * Autopilot is just a stub
 Tests
     All methods
@@ -13,8 +12,6 @@ Tests
 * Redesign Aircraft movers
     * Standard damping & equilibrium dynamics for control axes
         * (restoring forces)
-    * lift, drag, slip forces update
-        * function of attitude relative to velocity
     * Fixed wing mover
         * tests for physical behavior
     * Fixed wing autopilot

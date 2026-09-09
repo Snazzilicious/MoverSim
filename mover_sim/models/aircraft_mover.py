@@ -490,14 +490,16 @@ class FixedWingMover(TranslationalMover, IntegratedMover):
         initial_body_rates=None,
         mass=10000.0,
         rotational_mass=None,
-        t_max=80000.0,
         area=30.0,
         cd0=0.02,
-        cl0=0.2,
+        cd_alpha=0.3,
+        cd_beta=0.3,
+        cl_alpha=4.5,
+        cy_beta=-1.5,
+        t_max=80000.0,
         max_roll_moment=5.0e4,
         max_pitch_moment=5.0e4,
         max_yaw_moment=2.0e4,
-        side_force_coeff=10.0,
         use_coriolis=True,
     ):
         """
@@ -509,14 +511,16 @@ class FixedWingMover(TranslationalMover, IntegratedMover):
             initial_body_rates: Optional time derivatives of initial_orientation (axis of rotation with rate as magnitude).
             mass: Vehicle mass in kg.
             rotational_mass: Body inertia as a `(3, 3)` tensor or `(3,)` principal moments.
+            area: Reference aerodynamic area in m^2.
+            cd0: Zero-angle drag coefficient.
+            cd_alpha: Additional drag coefficient applied with `alpha^2`.
+            cd_beta: Additional drag coefficient applied with `beta^2`.
+            cl_alpha: Lift slope coefficient in body-up direction.
+            cy_beta: Sideslip slope coefficient in body-right direction.
             t_max: Maximum thrust in Newtons.
-            area: Wing reference area in m^2.
-            cd0: Zero-lift drag coefficient.
-            cl0: Base lift coefficient.
             max_roll_moment: Maximum roll moment in N*m.
             max_pitch_moment: Maximum pitch moment in N*m.
             max_yaw_moment: Maximum yaw moment in N*m.
-            side_force_coeff: Sideslip damping coefficient.
             use_coriolis: If True, include Coriolis acceleration in world-frame translation.
 
         State layout:
@@ -561,15 +565,17 @@ class FixedWingMover(TranslationalMover, IntegratedMover):
         self.mass = float(mass)
         self.rotational_mass = self._coerce_rotational_mass(rotational_mass)
         self.inv_rotational_mass = np.linalg.inv(self.rotational_mass)
-        self.max_thrust = float(t_max)
-        self.t_max = self.max_thrust
         self.area = float(area)
         self.cd0 = float(cd0)
-        self.cl0 = float(cl0)
+        self.cd_alpha = float(cd_alpha)
+        self.cd_beta = float(cd_beta)
+        self.cl_alpha = float(cl_alpha)
+        self.cy_beta = float(cy_beta)
+        self.max_thrust = float(t_max)
+        self.t_max = self.max_thrust
         self.max_roll_moment = float(max_roll_moment)
         self.max_pitch_moment = float(max_pitch_moment)
         self.max_yaw_moment = float(max_yaw_moment)
-        self.side_force_coeff = float(side_force_coeff)
         self.use_coriolis = bool(use_coriolis)
 
         # All 0-100
@@ -615,39 +621,38 @@ class FixedWingMover(TranslationalMover, IntegratedMover):
         return slice(15, 18)
 
     def _thrust_vector( self, forward ):
+        # Thrust is applied along the body forward axis with a 0-100 percent command.
         return ( self.thrust_cmd / 100.0 ) * self.max_thrust * forward
-    
-    def _drag_vector( self, forward ):
-        pos = self.position
-        vel = self.velocity
-        alt = ecef_to_lla(pos[0], pos[1], pos[2])[2]
-        return aerodynamic_drag_force(vel, alt, self.cd0, self.area)
-    
-    def _lift_vector( self, up ):
-        pos = self.position
-        vel = self.velocity
-        v_mag = np.linalg.norm(vel)
-        if v_mag < 1e-6:
+
+    def _aerodynamic_force(self, pos, vel, orientation):
+        # Use a simple body-axis aerodynamic model driven by air-relative attitude:
+        # x: quadratic drag, y: sideslip force proportional to beta, z: lift proportional to alpha.
+        speed = np.linalg.norm(vel)
+        if speed < 1e-6 or self.area <= 0.0:
             return np.zeros(3)
-        alt = ecef_to_lla(pos[0], pos[1], pos[2])[2]
+
+        _, _, alt = ecef_to_lla(pos[0], pos[1], pos[2])
         rho = air_density(alt)
-        cl = self.cl0 + 0.1 * (self.pitch_cmd / 100.0)
-        lift_mag = 0.5 * rho * (v_mag ** 2) * self.area * cl
-        return lift_mag * up
-    
-    def _slip_vector( self, right ):
-        """Sideways force due to yaw / sideslip
-        """
-        vel = self.velocity
-        v_mag = np.linalg.norm(vel)
-        if v_mag < 1e-6:
-            return np.zeros(3)
-        pos = self.position
-        alt = ecef_to_lla(pos[0], pos[1], pos[2])[2]
-        rho = air_density(alt)
-        v_side = np.dot(vel, right)
-        slip_force_mag = 0.5 * rho * v_mag * self.area * self.side_force_coeff * v_side
-        return -slip_force_mag * right
+        dynamic_pressure = 0.5 * rho * (speed ** 2)
+
+        # Express the velocity in body coordinates so angle of attack and sideslip come
+        # directly from how the relative wind is seen by the aircraft frame.
+        velocity_body = orientation.T @ vel
+        forward_speed = max(velocity_body[0], 1e-6)
+        alpha = np.arctan2(-velocity_body[2], forward_speed)
+        beta = np.arctan2(velocity_body[1], forward_speed)
+
+        # Drag grows with alpha^2 and beta^2 while lift and side force remain linear in
+        # small-angle alpha/beta for a simple, tunable fixed-wing approximation.
+        drag_coeff = self.cd0 + self.cd_alpha * (alpha ** 2) + self.cd_beta * (beta ** 2)
+        body_force = dynamic_pressure * self.area * np.array([
+            -drag_coeff,
+            self.cy_beta * beta,
+            self.cl_alpha * alpha,
+        ])
+
+        # Rotate the body-axis force back into ECEF/world coordinates for translation.
+        return orientation @ body_force
     
     def _roll_moment( self, up, right ):
         """Applies force in up direction at position 1.0*right
@@ -670,13 +675,12 @@ class FixedWingMover(TranslationalMover, IntegratedMover):
     def _nose_restoring_force( self, forward, velocity ):
         """Stabilizing force which pulls the nose in line with the velocity
         """
-        raise NotImplementedError
+        return np.zeros((3, 3))
     
     def _roll_restoring_force( self, up, velocity ):
         """Stabilizing force which pulls the wings perpendicular with the velocity
         """
-        raise NotImplementedError
-        return magnitude * np.outer( up, right )
+        return np.zeros((3, 3))
     
 
     def compute_state_derivative(self, t, state):
@@ -704,9 +708,7 @@ class FixedWingMover(TranslationalMover, IntegratedMover):
 
         # Body acceleration
         body_force = self._thrust_vector( forward )
-        body_force += self._drag_vector( forward )
-        body_force += self._lift_vector( up )
-        body_force += self._slip_vector( right )
+        body_force += self._aerodynamic_force(pos, vel, orientation)
 
         accel = gravity(pos)
         if self.use_coriolis:
@@ -716,9 +718,9 @@ class FixedWingMover(TranslationalMover, IntegratedMover):
         dvel = accel + body_force / self.mass
 
         # Rotational acceleration
-        body_moment = self._roll_force( up, right )
-        body_moment += self._pitch_force( up, forward )
-        body_moment += self._yaw_force( right, forward )
+        body_moment = self._roll_moment( up, right )
+        body_moment += self._pitch_moment( up, forward )
+        body_moment += self._yaw_moment( right, forward )
         body_moment += self._nose_restoring_force( forward, vel )
         body_moment += self._roll_restoring_force( up, vel )
 
