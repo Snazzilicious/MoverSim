@@ -884,6 +884,34 @@ class FixedWingAutopilot(Controller):
         self.hold_altitude = ecef_to_lla(pos[0], pos[1], pos[2])[2]
         self.hold_horizontal_direction = hold_horizontal_direction
 
+    def _hold_heading_error(self, mover):
+        # Returns the signed horizontal heading error in radians from the current track
+        # to the stored hold direction; positive means turn left, negative turn right.
+        if self.hold_horizontal_direction is None:
+            return 0.0
+
+        pos = mover.position
+        vel = mover.velocity
+        local_up = pos / max(np.linalg.norm(pos), 1e-6)
+
+        current_horizontal = vel - np.dot(vel, local_up) * local_up
+        current_horizontal_norm = np.linalg.norm(current_horizontal)
+        if current_horizontal_norm > 1e-6:
+            current_horizontal = current_horizontal / current_horizontal_norm
+        else:
+            # When the horizontal velocity nearly vanishes, use the projected body-forward
+            # direction so hold mode still has a meaningful heading reference.
+            current_horizontal = mover.orientation[:, 0] - np.dot(mover.orientation[:, 0], local_up) * local_up
+            current_horizontal_norm = np.linalg.norm(current_horizontal)
+            if current_horizontal_norm <= 1e-6:
+                return 0.0
+            current_horizontal = current_horizontal / current_horizontal_norm
+
+        return np.arctan2(
+            np.dot(np.cross(current_horizontal, self.hold_horizontal_direction), local_up),
+            np.clip(np.dot(current_horizontal, self.hold_horizontal_direction), -1.0, 1.0),
+        )
+
     def update( self, t, engine ):
         """Adjusts thrust, roll, pitch, yaw commands to remain on course.
         """

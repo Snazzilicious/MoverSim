@@ -709,6 +709,53 @@ def test_fixed_wing_autopilot_enter_hold_mode_falls_back_to_body_forward_when_ho
     assert np.allclose(autopilot.hold_horizontal_direction, expected_horizontal, atol=1e-7)
 
 
+def test_fixed_wing_autopilot_hold_heading_error_is_zero_when_aligned():
+    pos = lla_to_ecef(0.0, 0.0, 2000.0)
+    vel = np.array([0.0, 180.0, 0.0])
+    mover = FixedWingMover(pos, vel, use_coriolis=False)
+    autopilot = FixedWingAutopilot([], target_speed=190.0)
+    autopilot.hold_horizontal_direction = vel / np.linalg.norm(vel)
+
+    assert np.isclose(autopilot._hold_heading_error(mover), 0.0, atol=1e-9)
+
+
+def test_fixed_wing_autopilot_hold_heading_error_has_expected_sign():
+    pos = lla_to_ecef(0.0, 0.0, 2000.0)
+    vel = np.array([0.0, 180.0, 0.0])
+    mover = FixedWingMover(pos, vel, use_coriolis=False)
+    autopilot = FixedWingAutopilot([], target_speed=190.0)
+
+    local_up = pos / np.linalg.norm(pos)
+    current_horizontal = vel / np.linalg.norm(vel)
+    left_turn_direction = np.cross(local_up, current_horizontal)
+    left_turn_direction /= np.linalg.norm(left_turn_direction)
+
+    autopilot.hold_horizontal_direction = left_turn_direction
+    left_error = autopilot._hold_heading_error(mover)
+    autopilot.hold_horizontal_direction = -left_turn_direction
+    right_error = autopilot._hold_heading_error(mover)
+
+    assert left_error > 0.0
+    assert right_error < 0.0
+
+
+def test_fixed_wing_autopilot_hold_heading_error_falls_back_to_projected_body_forward():
+    pos = lla_to_ecef(0.0, 0.0, 2000.0)
+    local_up = pos / np.linalg.norm(pos)
+    base_mover = FixedWingMover(pos, np.array([0.0, 180.0, 0.0]), use_coriolis=False)
+    mover = FixedWingMover(
+        pos,
+        180.0 * local_up,
+        initial_orientation=base_mover.orientation,
+        use_coriolis=False,
+    )
+    autopilot = FixedWingAutopilot([], target_speed=190.0)
+    autopilot.hold_horizontal_direction = base_mover.orientation[:, 0] - np.dot(base_mover.orientation[:, 0], local_up) * local_up
+    autopilot.hold_horizontal_direction /= np.linalg.norm(autopilot.hold_horizontal_direction)
+
+    assert np.isclose(autopilot._hold_heading_error(mover), 0.0, atol=1e-9)
+
+
 def test_fixed_wing_autopilot_update_does_not_advance_outside_radius():
     pos = lla_to_ecef(0.0, 0.0, 2000.0)
     vel = np.array([0.0, 180.0, 0.0])
