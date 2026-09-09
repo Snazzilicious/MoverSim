@@ -596,17 +596,16 @@ def test_fixed_wing_autopilot_constructor_stores_normalized_route():
 
     assert len(autopilot.waypoints) == 3
     assert all(isinstance(wp, np.ndarray) and wp.shape == (3,) for wp in autopilot.waypoints)
-    assert np.allclose(autopilot.leg_target_speeds, [180.0, 180.0])
+    assert np.allclose(autopilot.target_speeds, [180.0, 180.0, 180.0])
     assert autopilot.target_speed == 180.0
     assert autopilot.max_climb_rate == 4.0
     assert autopilot.waypoint_radius == 750.0
     assert autopilot.update_interval == 0.2
     assert autopilot.current_wp_idx == 0
-    assert autopilot.current_leg_idx is None
     assert autopilot.completed is False
 
 
-def test_fixed_wing_autopilot_constructor_accepts_per_leg_speeds():
+def test_fixed_wing_autopilot_constructor_accepts_per_waypoint_speeds():
     wp1 = lla_to_ecef(0.0, 0.00, 2000.0)
     wp2 = lla_to_ecef(0.0, 0.02, 2200.0)
     wp3 = lla_to_ecef(0.0, 0.04, 2400.0)
@@ -614,11 +613,11 @@ def test_fixed_wing_autopilot_constructor_accepts_per_leg_speeds():
     autopilot = FixedWingAutopilot(
         [wp1, wp2, wp3],
         target_speed=180.0,
-        target_speeds=[160.0, 210.0],
+        target_speeds=[160.0, 190.0, 210.0],
         max_climb_rate=6.0,
     )
 
-    assert np.allclose(autopilot.leg_target_speeds, [160.0, 210.0])
+    assert np.allclose(autopilot.target_speeds, [160.0, 190.0, 210.0])
     assert autopilot.max_climb_rate == 6.0
 
 
@@ -628,7 +627,7 @@ def test_fixed_wing_autopilot_constructor_allows_single_waypoint_route():
     autopilot = FixedWingAutopilot([wp], target_speed=170.0)
 
     assert len(autopilot.waypoints) == 1
-    assert autopilot.leg_target_speeds.shape == (0,)
+    assert autopilot.target_speeds.shape == (1,)
 
 
 def test_fixed_wing_autopilot_update_does_not_advance_outside_radius():
@@ -645,7 +644,6 @@ def test_fixed_wing_autopilot_update_does_not_advance_outside_radius():
     autopilot.update(0.0, engine)
 
     assert autopilot.current_wp_idx == 0
-    assert autopilot.current_leg_idx is None
     assert autopilot.completed is False
 
 
@@ -665,7 +663,6 @@ def test_fixed_wing_autopilot_update_advances_to_first_route_leg():
     autopilot.update(0.0, engine)
 
     assert autopilot.current_wp_idx == 1
-    assert autopilot.current_leg_idx == 0
     assert autopilot.completed is False
     assert events == [("fixed_wing_route", 0)]
 
@@ -687,7 +684,6 @@ def test_fixed_wing_autopilot_update_advances_through_multiple_waypoints_and_com
     autopilot.update(0.0, engine)
 
     assert autopilot.current_wp_idx == 3
-    assert autopilot.current_leg_idx is None
     assert autopilot.completed is True
     assert events == [
         ("fixed_wing_route", 0),
@@ -704,8 +700,8 @@ def test_fixed_wing_autopilot_update_advances_through_multiple_waypoints_and_com
         ({"waypoints": [np.zeros(3)], "target_speed": -1.0}, "target_speed"),
         ({"waypoints": [np.zeros(3)], "waypoint_radius": 0.0}, "waypoint_radius"),
         ({"waypoints": [np.zeros(3)], "max_climb_rate": -1.0}, "max_climb_rate"),
-        ({"waypoints": [np.zeros(3), np.ones(3)], "target_speeds": [100.0, 120.0]}, r"shape \(1,\)"),
-        ({"waypoints": [np.zeros(3), np.ones(3)], "target_speeds": [-5.0]}, "non-negative"),
+        ({"waypoints": [np.zeros(3), np.ones(3)], "target_speeds": [100.0]}, r"shape \(2,\)"),
+        ({"waypoints": [np.zeros(3), np.ones(3)], "target_speeds": [100.0, -5.0]}, "non-negative"),
     ],
 )
 def test_fixed_wing_autopilot_constructor_rejects_invalid_inputs(kwargs, message):

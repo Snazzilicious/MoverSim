@@ -800,10 +800,11 @@ class FixedWingAutopilot(Controller):
 
         Parameters:
             waypoints: Sequence of ECEF waypoint positions with shape `(3,)`.
-            target_speed: Default target speed in m/s used for every route leg unless
+            target_speed: Default target speed in m/s used while flying toward every
+                waypoint unless
                 overridden by `target_speeds`.
-            target_speeds: Optional per-leg speed overrides in m/s. If provided, its
-                length must be `len(waypoints) - 1`.
+            target_speeds: Optional per-waypoint speed overrides in m/s. If provided,
+                its length must be `len(waypoints)`.
             max_climb_rate: Maximum commanded climb or descent rate in m/s.
             waypoint_radius: Distance in meters used to declare a waypoint reached.
             update_interval: Controller execution period in seconds.
@@ -827,29 +828,17 @@ class FixedWingAutopilot(Controller):
         self.max_climb_rate = float(max_climb_rate)
         self.waypoint_radius = float(waypoint_radius)
         self.current_wp_idx = 0
-        self.current_leg_idx = None
         self.completed = False
 
-        leg_count = max(0, len(self.waypoints) - 1)
+        waypoint_count = len(self.waypoints)
         if target_speeds is None:
-            self.leg_target_speeds = np.full(leg_count, self.target_speed, dtype=float)
+            self.target_speeds = np.full(waypoint_count, self.target_speed, dtype=float)
         else:
-            self.leg_target_speeds = np.asarray(target_speeds, dtype=float)
-            if self.leg_target_speeds.shape != (leg_count,):
-                raise ValueError(f"target_speeds must have shape ({leg_count},)")
-            if np.any(self.leg_target_speeds < 0.0):
+            self.target_speeds = np.asarray(target_speeds, dtype=float)
+            if self.target_speeds.shape != (waypoint_count,):
+                raise ValueError(f"target_speeds must have shape ({waypoint_count},)")
+            if np.any(self.target_speeds < 0.0):
                 raise ValueError("target_speeds must be non-negative")
-
-    def _sync_route_progress(self):
-        if self.current_wp_idx >= len(self.waypoints):
-            self.current_leg_idx = None
-            self.completed = True
-        elif self.current_wp_idx <= 0:
-            self.current_leg_idx = None
-            self.completed = False
-        else:
-            self.current_leg_idx = self.current_wp_idx - 1
-            self.completed = False
 
     def update( self, t, engine ):
         """Adjusts thrust, roll, pitch, yaw commands to remain on course.
@@ -858,10 +847,10 @@ class FixedWingAutopilot(Controller):
         if not isinstance(mover, FixedWingMover):
             return
 
-        # Keep leg/completion bookkeeping derived from the active waypoint index.
-        self._sync_route_progress()
-        if self.completed:
+        if self.current_wp_idx >= len(self.waypoints):
+            self.completed = True
             return
+        self.completed = False
 
         pos = mover.position
         # Consume any waypoint whose capture sphere already contains the aircraft. This
@@ -871,16 +860,14 @@ class FixedWingAutopilot(Controller):
                 break
             reached_wp_idx = self.current_wp_idx
             self.current_wp_idx += 1
-            self._sync_route_progress()
             engine.broker.publish("waypoint_reached", self.platform, reached_wp_idx)
 
         # Guidance-command logic only runs while there is still an active target waypoint.
         if self.current_wp_idx >= len(self.waypoints):
-            self._sync_route_progress()
+            self.completed = True
             return
 
-        # Checks if tracked waypoint should be incremented
-        # If no more waypoints, should maintain last heading, altitude, and speed
+        # If no more waypoints, should maintain straight and level at last speed
 
         # Gets to next waypoint's altitude asap, subject to +/-max_climb_rate
         # Then stays at it
