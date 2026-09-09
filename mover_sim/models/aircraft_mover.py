@@ -649,19 +649,19 @@ class FixedWingMover(TranslationalMover, IntegratedMover):
         slip_force_mag = 0.5 * rho * v_mag * self.area * self.side_force_coeff * v_side
         return -slip_force_mag * right
     
-    def _roll_force( self, up, right ):
+    def _roll_moment( self, up, right ):
         """Applies force in up direction at position 1.0*right
         """
         magnitude = (self.roll_cmd / 100.0) * self.max_roll_moment
         return magnitude * np.outer( up, right )
     
-    def _pitch_force( self, up, forward ):
+    def _pitch_moment( self, up, forward ):
         """Applies force in up direction at position 1.0*forward
         """
         magnitude = (self.pitch_cmd / 100.0) * self.max_pitch_moment
         return magnitude * np.outer( up, forward )
     
-    def _yaw_force( self, right, forward ):
+    def _yaw_moment( self, right, forward ):
         """Applies force in right direction at position 1.0*forward
         """
         magnitude = (self.yaw_cmd / 100.0) * self.max_yaw_moment
@@ -716,13 +716,13 @@ class FixedWingMover(TranslationalMover, IntegratedMover):
         dvel = accel + body_force / self.mass
 
         # Rotational acceleration
-        rotational_force = self._roll_force( up, right )
-        rotational_force += self._pitch_force( up, forward )
-        rotational_force += self._yaw_force( right, forward )
-        rotational_force += self._nose_restoring_force( forward, vel )
-        rotational_force += self._roll_restoring_force( up, vel )
+        body_moment = self._roll_force( up, right )
+        body_moment += self._pitch_force( up, forward )
+        body_moment += self._yaw_force( right, forward )
+        body_moment += self._nose_restoring_force( forward, vel )
+        body_moment += self._roll_restoring_force( up, vel )
 
-        domega = orientation.T @ rotational_force
+        domega = orientation.T @ body_moment
         domega = np.linalg.solve( self.rotational_mass.T, domega.T ).T
         domega = 0.5 * ( domega - domega.T )
         domega = skew_symmetric_to_vector( domega )
