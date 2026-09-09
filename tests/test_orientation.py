@@ -3,6 +3,7 @@ import numpy as np
 from mover_sim.math.orientation import (
     build_aircraft_body_axes,
     normalize_quaternion,
+    project_to_rotation_matrix,
     quaternion_derivative_from_body_rates,
     quaternion_from_basis,
     quaternion_multiply,
@@ -70,3 +71,32 @@ def test_build_aircraft_body_axes_uses_curvature_to_bank_frame():
     assert np.isclose(np.linalg.norm(up), 1.0)
     assert np.allclose(np.cross(forward, right), up, atol=1e-7)
     assert up[1] < 0.0
+
+
+def test_project_to_rotation_matrix():
+    # Valid rotation matrix should remain unchanged
+    valid_rot = np.array([
+        [0.0, -1.0, 0.0],
+        [1.0, 0.0, 0.0],
+        [0.0, 0.0, 1.0],
+    ])
+    projected = project_to_rotation_matrix(valid_rot)
+    assert np.allclose(projected, valid_rot)
+    assert np.allclose(projected.T @ projected, np.eye(3), atol=1e-7)
+    assert np.isclose(np.linalg.det(projected), 1.0, atol=1e-7)
+
+    # Perturbed matrix should be projected onto SO(3)
+    noisy_rot = valid_rot + 0.1 * np.ones((3, 3))
+    projected_noisy = project_to_rotation_matrix(noisy_rot)
+    assert np.allclose(projected_noisy.T @ projected_noisy, np.eye(3), atol=1e-7)
+    assert np.isclose(np.linalg.det(projected_noisy), 1.0, atol=1e-7)
+
+    # Reflection matrix (det = -1) should be corrected to det = +1
+    reflection_rot = np.array([
+        [1.0, 0.0, 0.0],
+        [0.0, 1.0, 0.0],
+        [0.0, 0.0, -1.0],
+    ])
+    projected_refl = project_to_rotation_matrix(reflection_rot)
+    assert np.allclose(projected_refl.T @ projected_refl, np.eye(3), atol=1e-7)
+    assert np.isclose(np.linalg.det(projected_refl), 1.0, atol=1e-7)

@@ -1,13 +1,12 @@
 
 ### FixedWingMover
 
-* force models missing
+* force models incomplete
     * need damping model
+    * body forces function of attitude relative to velocity
 * Autopilot is just a stub
 Tests
     All methods
-    project_to_SO(3)
-    centrifugal force
 
 ### Grand TODO
 
