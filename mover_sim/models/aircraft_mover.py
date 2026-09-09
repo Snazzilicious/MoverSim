@@ -827,7 +827,6 @@ class FixedWingAutopilot(Controller):
         self.max_climb_rate = float(max_climb_rate)
         self.waypoint_radius = float(waypoint_radius)
         self.current_wp_idx = 0
-        self.completed = False
         self.k_heading = 100.0 / np.radians(60.0)
         self.k_altitude = 0.05
         self.k_climb_rate = 12.0
@@ -838,6 +837,7 @@ class FixedWingAutopilot(Controller):
         self.hold_horizontal_direction = None
 
         waypoint_count = len(self.waypoints)
+        self.completed = waypoint_count == 0
         if target_speeds is None:
             self.target_speeds = np.full(waypoint_count, self.target_speed, dtype=float)
         else:

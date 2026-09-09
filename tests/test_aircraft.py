@@ -641,7 +641,7 @@ def test_fixed_wing_autopilot_constructor_allows_empty_route():
     assert autopilot.waypoints == []
     assert autopilot.target_speeds.shape == (0,)
     assert autopilot.current_wp_idx == 0
-    assert autopilot.completed is False
+    assert autopilot.completed is True
     assert autopilot.hold_active is False
     assert autopilot.hold_speed is None
     assert autopilot.hold_altitude is None
@@ -653,6 +653,7 @@ def test_fixed_wing_autopilot_constructor_allows_empty_route_with_empty_target_s
 
     assert autopilot.waypoints == []
     assert autopilot.target_speeds.shape == (0,)
+    assert autopilot.completed is True
     assert autopilot.hold_active is False
 
 
@@ -681,12 +682,14 @@ def test_fixed_wing_autopilot_enter_hold_mode_uses_default_speed_for_empty_route
 
     mover = FixedWingMover(pos, vel, use_coriolis=False)
     autopilot = FixedWingAutopilot([], target_speed=190.0)
+    expected_horizontal = vel / np.linalg.norm(vel)
 
     autopilot._enter_hold_mode(mover)
 
     assert autopilot.hold_active is True
     assert autopilot.hold_speed == 190.0
     assert np.isclose(autopilot.hold_altitude, 2000.0, atol=1.0)
+    assert np.allclose(autopilot.hold_horizontal_direction, expected_horizontal, atol=1e-7)
 
 
 def test_fixed_wing_autopilot_enter_hold_mode_falls_back_to_body_forward_when_horizontal_speed_is_small():
