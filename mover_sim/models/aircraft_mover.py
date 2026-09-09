@@ -847,6 +847,43 @@ class FixedWingAutopilot(Controller):
             if np.any(self.target_speeds < 0.0):
                 raise ValueError("target_speeds must be non-negative")
 
+    def _enter_hold_mode(self, mover):
+        if self.hold_active:
+            return
+
+        pos = mover.position
+        vel = mover.velocity
+        local_up = pos / max(np.linalg.norm(pos), 1e-6)
+
+        # Prefer the current horizontal flight direction so terminal hold continues from
+        # the aircraft's actual track rather than snapping to its body heading.
+        velocity_horizontal = vel - np.dot(vel, local_up) * local_up
+        velocity_horizontal_norm = np.linalg.norm(velocity_horizontal)
+        if velocity_horizontal_norm > 1e-6:
+            hold_horizontal_direction = velocity_horizontal / velocity_horizontal_norm
+        else:
+            # If the aircraft is moving nearly straight up/down, fall back to the body
+            # forward axis projected into the local horizontal plane.
+            forward_horizontal = mover.orientation[:, 0] - np.dot(mover.orientation[:, 0], local_up) * local_up
+            forward_horizontal_norm = np.linalg.norm(forward_horizontal)
+            if forward_horizontal_norm > 1e-6:
+                hold_horizontal_direction = forward_horizontal / forward_horizontal_norm
+            else:
+                # Final fallback for degenerate geometry: pick any stable local-horizontal
+                # direction so hold mode still has a valid reference vector.
+                fallback = np.array([0.0, 0.0, 1.0])
+                if abs(np.dot(fallback, local_up)) > 0.95:
+                    fallback = np.array([0.0, 1.0, 0.0])
+                hold_horizontal_direction = fallback - np.dot(fallback, local_up) * local_up
+                hold_horizontal_direction /= max(np.linalg.norm(hold_horizontal_direction), 1e-6)
+
+        # Hold speed comes from the last route target if one exists; otherwise the
+        # default cruise target is used for empty-route hold mode.
+        self.hold_active = True
+        self.hold_speed = self.target_speeds[-1] if len(self.target_speeds) > 0 else self.target_speed
+        self.hold_altitude = ecef_to_lla(pos[0], pos[1], pos[2])[2]
+        self.hold_horizontal_direction = hold_horizontal_direction
+
     def update( self, t, engine ):
         """Adjusts thrust, roll, pitch, yaw commands to remain on course.
         """

@@ -656,6 +656,59 @@ def test_fixed_wing_autopilot_constructor_allows_empty_route_with_empty_target_s
     assert autopilot.hold_active is False
 
 
+def test_fixed_wing_autopilot_enter_hold_mode_uses_last_route_speed_and_current_flight_direction():
+    pos = lla_to_ecef(0.0, 0.0, 2000.0)
+    vel = np.array([0.0, 180.0, 20.0])
+    wp1 = lla_to_ecef(0.0, 0.01, 2100.0)
+    wp2 = lla_to_ecef(0.0, 0.02, 2200.0)
+
+    mover = FixedWingMover(pos, vel, use_coriolis=False)
+    autopilot = FixedWingAutopilot([wp1, wp2], target_speeds=[160.0, 210.0])
+    expected_horizontal = vel - np.dot(vel, pos / np.linalg.norm(pos)) * (pos / np.linalg.norm(pos))
+    expected_horizontal /= np.linalg.norm(expected_horizontal)
+
+    autopilot._enter_hold_mode(mover)
+
+    assert autopilot.hold_active is True
+    assert autopilot.hold_speed == 210.0
+    assert np.isclose(autopilot.hold_altitude, 2000.0, atol=1.0)
+    assert np.allclose(autopilot.hold_horizontal_direction, expected_horizontal, atol=1e-7)
+
+
+def test_fixed_wing_autopilot_enter_hold_mode_uses_default_speed_for_empty_route():
+    pos = lla_to_ecef(0.0, 0.0, 2000.0)
+    vel = np.array([0.0, 180.0, 0.0])
+
+    mover = FixedWingMover(pos, vel, use_coriolis=False)
+    autopilot = FixedWingAutopilot([], target_speed=190.0)
+
+    autopilot._enter_hold_mode(mover)
+
+    assert autopilot.hold_active is True
+    assert autopilot.hold_speed == 190.0
+    assert np.isclose(autopilot.hold_altitude, 2000.0, atol=1.0)
+
+
+def test_fixed_wing_autopilot_enter_hold_mode_falls_back_to_body_forward_when_horizontal_speed_is_small():
+    pos = lla_to_ecef(0.0, 0.0, 2000.0)
+    local_up = pos / np.linalg.norm(pos)
+    base_mover = FixedWingMover(pos, np.array([0.0, 180.0, 0.0]), use_coriolis=False)
+    mover = FixedWingMover(
+        pos,
+        180.0 * local_up,
+        initial_orientation=base_mover.orientation,
+        use_coriolis=False,
+    )
+    autopilot = FixedWingAutopilot([], target_speed=190.0)
+    expected_horizontal = mover.orientation[:, 0] - np.dot(mover.orientation[:, 0], local_up) * local_up
+    expected_horizontal /= np.linalg.norm(expected_horizontal)
+
+    autopilot._enter_hold_mode(mover)
+
+    assert autopilot.hold_active is True
+    assert np.allclose(autopilot.hold_horizontal_direction, expected_horizontal, atol=1e-7)
+
+
 def test_fixed_wing_autopilot_update_does_not_advance_outside_radius():
     pos = lla_to_ecef(0.0, 0.0, 2000.0)
     vel = np.array([0.0, 180.0, 0.0])
