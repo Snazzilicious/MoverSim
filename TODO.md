@@ -1,19 +1,18 @@
 
-### FixedWingMover
+### FixedWingMoverAutopilot
 
 * Autopilot is just a stub
-Tests
-    All methods
+    * Add route sequencing
+    * Add inputs logic
 
 ### Grand TODO
 
 * Redesign Aircraft movers
-    * Fixed wing mover
-        * tests for physical behavior
     * Fixed wing autopilot
         * tests for tracking a route
         * Intelligence to pick the appropriate inputs
     * Rocket mover
+        * fuel model
     * Rocket guidance
     * Ballistic mover
     * Remove old aircraft mover(s)

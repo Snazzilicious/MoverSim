@@ -502,7 +502,7 @@ class FixedWingMover(TranslationalMover, IntegratedMover):
         roll_damping_coeff=1.5e4,
         pitch_damping_coeff=2.0e4,
         yaw_damping_coeff=1.5e4,
-        t_max=80000.0,
+        max_thrust=80000.0,
         max_roll_moment=5.0e4,
         max_pitch_moment=5.0e4,
         max_yaw_moment=2.0e4,
@@ -529,7 +529,7 @@ class FixedWingMover(TranslationalMover, IntegratedMover):
             roll_damping_coeff: Roll damping moment per rad/s of body roll rate.
             pitch_damping_coeff: Pitch damping moment per rad/s of body pitch rate.
             yaw_damping_coeff: Yaw damping moment per rad/s of body yaw rate.
-            t_max: Maximum thrust in Newtons.
+            max_thrust: Maximum thrust in Newtons.
             max_roll_moment: Maximum roll moment in N*m.
             max_pitch_moment: Maximum pitch moment in N*m.
             max_yaw_moment: Maximum yaw moment in N*m.
@@ -589,8 +589,7 @@ class FixedWingMover(TranslationalMover, IntegratedMover):
         self.roll_damping_coeff = float(roll_damping_coeff)
         self.pitch_damping_coeff = float(pitch_damping_coeff)
         self.yaw_damping_coeff = float(yaw_damping_coeff)
-        self.max_thrust = float(t_max)
-        self.t_max = self.max_thrust
+        self.max_thrust = float(max_thrust)
         self.max_roll_moment = float(max_roll_moment)
         self.max_pitch_moment = float(max_pitch_moment)
         self.max_yaw_moment = float(max_yaw_moment)
@@ -788,13 +787,25 @@ class FixedWingMover(TranslationalMover, IntegratedMover):
 
 
 class FixedWingAutopilot(Controller):
-    def __init__( self, waypoints, target_speeds, waypoint_radius=500.0, update_interval=0.1 ):
+    def __init__( self, waypoints, target_speeds, max_climb_rate=4, waypoint_radius=500.0, update_interval=0.1 ):
         super().__init__()
         self.route = route
 
     def update( self, t, engine ):
         """Adjusts thrust, roll, pitch, yaw commands to remain on course.
         """
+
+        # Checks if tracked waypoint should be incremented
+        # If no more waypoints, should maintain last heading, altitude, and speed
+
+        # Gets to next waypoint's altitude asap, subject to +/-max_climb_rate
+        # Then stays at it
+
+        # Gets to next waypoint's target_speed asap
+        # Then stays at it
+
+        # Maintains heading to next waypoint
+
         return
 
 
