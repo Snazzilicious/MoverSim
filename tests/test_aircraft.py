@@ -602,6 +602,7 @@ def test_fixed_wing_autopilot_constructor_stores_normalized_route():
     assert autopilot.waypoint_radius == 750.0
     assert autopilot.update_interval == 0.2
     assert autopilot.current_wp_idx == 0
+    assert autopilot.current_leg_idx is None
     assert autopilot.completed is False
 
 
@@ -628,6 +629,71 @@ def test_fixed_wing_autopilot_constructor_allows_single_waypoint_route():
 
     assert len(autopilot.waypoints) == 1
     assert autopilot.leg_target_speeds.shape == (0,)
+
+
+def test_fixed_wing_autopilot_update_does_not_advance_outside_radius():
+    pos = lla_to_ecef(0.0, 0.0, 2000.0)
+    vel = np.array([0.0, 180.0, 0.0])
+    wp1 = lla_to_ecef(0.0, 0.02, 2000.0)
+    wp2 = lla_to_ecef(0.0, 0.04, 2000.0)
+
+    mover = FixedWingMover(pos, vel, use_coriolis=False)
+    autopilot = FixedWingAutopilot([wp1, wp2], waypoint_radius=100.0)
+    engine = SimulationEngine()
+    engine.register_platform(Platform("fixed_wing_route", mover, autopilot))
+
+    autopilot.update(0.0, engine)
+
+    assert autopilot.current_wp_idx == 0
+    assert autopilot.current_leg_idx is None
+    assert autopilot.completed is False
+
+
+def test_fixed_wing_autopilot_update_advances_to_first_route_leg():
+    pos = lla_to_ecef(0.0, 0.0, 2000.0)
+    vel = np.array([0.0, 180.0, 0.0])
+    wp1 = pos
+    wp2 = lla_to_ecef(0.0, 0.02, 2000.0)
+
+    mover = FixedWingMover(pos, vel, use_coriolis=False)
+    autopilot = FixedWingAutopilot([wp1, wp2], waypoint_radius=100.0)
+    engine = SimulationEngine()
+    events = []
+    engine.broker.subscribe("waypoint_reached", lambda platform, idx: events.append((platform.id, idx)))
+    engine.register_platform(Platform("fixed_wing_route", mover, autopilot))
+
+    autopilot.update(0.0, engine)
+
+    assert autopilot.current_wp_idx == 1
+    assert autopilot.current_leg_idx == 0
+    assert autopilot.completed is False
+    assert events == [("fixed_wing_route", 0)]
+
+
+def test_fixed_wing_autopilot_update_advances_through_multiple_waypoints_and_completes():
+    pos = lla_to_ecef(0.0, 0.0, 2000.0)
+    vel = np.array([0.0, 180.0, 0.0])
+    wp1 = pos
+    wp2 = pos
+    wp3 = pos
+
+    mover = FixedWingMover(pos, vel, use_coriolis=False)
+    autopilot = FixedWingAutopilot([wp1, wp2, wp3], waypoint_radius=100.0)
+    engine = SimulationEngine()
+    events = []
+    engine.broker.subscribe("waypoint_reached", lambda platform, idx: events.append((platform.id, idx)))
+    engine.register_platform(Platform("fixed_wing_route", mover, autopilot))
+
+    autopilot.update(0.0, engine)
+
+    assert autopilot.current_wp_idx == 3
+    assert autopilot.current_leg_idx is None
+    assert autopilot.completed is True
+    assert events == [
+        ("fixed_wing_route", 0),
+        ("fixed_wing_route", 1),
+        ("fixed_wing_route", 2),
+    ]
 
 
 @pytest.mark.parametrize(

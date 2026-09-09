@@ -827,6 +827,7 @@ class FixedWingAutopilot(Controller):
         self.max_climb_rate = float(max_climb_rate)
         self.waypoint_radius = float(waypoint_radius)
         self.current_wp_idx = 0
+        self.current_leg_idx = None
         self.completed = False
 
         leg_count = max(0, len(self.waypoints) - 1)
@@ -839,9 +840,44 @@ class FixedWingAutopilot(Controller):
             if np.any(self.leg_target_speeds < 0.0):
                 raise ValueError("target_speeds must be non-negative")
 
+    def _sync_route_progress(self):
+        if self.current_wp_idx >= len(self.waypoints):
+            self.current_leg_idx = None
+            self.completed = True
+        elif self.current_wp_idx <= 0:
+            self.current_leg_idx = None
+            self.completed = False
+        else:
+            self.current_leg_idx = self.current_wp_idx - 1
+            self.completed = False
+
     def update( self, t, engine ):
         """Adjusts thrust, roll, pitch, yaw commands to remain on course.
         """
+        mover = self.platform.mover
+        if not isinstance(mover, FixedWingMover):
+            return
+
+        # Keep leg/completion bookkeeping derived from the active waypoint index.
+        self._sync_route_progress()
+        if self.completed:
+            return
+
+        pos = mover.position
+        # Consume any waypoint whose capture sphere already contains the aircraft. This
+        # allows immediate progression through stacked or already-reached waypoints.
+        while self.current_wp_idx < len(self.waypoints):
+            if np.linalg.norm(self.waypoints[self.current_wp_idx] - pos) >= self.waypoint_radius:
+                break
+            reached_wp_idx = self.current_wp_idx
+            self.current_wp_idx += 1
+            self._sync_route_progress()
+            engine.broker.publish("waypoint_reached", self.platform, reached_wp_idx)
+
+        # Guidance-command logic only runs while there is still an active target waypoint.
+        if self.current_wp_idx >= len(self.waypoints):
+            self._sync_route_progress()
+            return
 
         # Checks if tracked waypoint should be incremented
         # If no more waypoints, should maintain last heading, altitude, and speed
