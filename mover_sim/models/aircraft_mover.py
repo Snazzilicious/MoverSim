@@ -912,6 +912,33 @@ class FixedWingAutopilot(Controller):
             np.clip(np.dot(current_horizontal, self.hold_horizontal_direction), -1.0, 1.0),
         )
 
+    def _update_hold_mode(self, mover):
+        pos = mover.position
+        vel = mover.velocity
+        speed = np.linalg.norm(vel)
+        local_up = pos / max(np.linalg.norm(pos), 1e-6)
+
+        heading_error = self._hold_heading_error(mover)
+        current_altitude = ecef_to_lla(pos[0], pos[1], pos[2])[2]
+        target_altitude = current_altitude if self.hold_altitude is None else self.hold_altitude
+        vertical_error = target_altitude - current_altitude
+        desired_climb_rate = np.clip(
+            self.k_altitude * vertical_error,
+            -self.max_climb_rate,
+            self.max_climb_rate,
+        )
+        actual_climb_rate = np.dot(vel, local_up)
+        climb_rate_error = desired_climb_rate - actual_climb_rate
+
+        drag_force_mag = np.linalg.norm(aerodynamic_drag_force(vel, current_altitude, mover.cd0, mover.area))
+        thrust_trim = 100.0 * drag_force_mag / max(mover.max_thrust, 1e-6)
+        target_speed = speed if self.hold_speed is None else self.hold_speed
+
+        mover.roll_cmd = np.clip(self.k_heading * heading_error, -100.0, 100.0)
+        mover.pitch_cmd = np.clip(self.k_climb_rate * climb_rate_error, -100.0, 100.0)
+        mover.thrust_cmd = np.clip(thrust_trim + self.k_speed * (target_speed - speed), 0.0, 100.0)
+        mover.yaw_cmd = 0.0
+
     def update( self, t, engine ):
         """Adjusts thrust, roll, pitch, yaw commands to remain on course.
         """
@@ -919,14 +946,18 @@ class FixedWingAutopilot(Controller):
         if not isinstance(mover, FixedWingMover):
             return
 
+        # With no active waypoint, capture terminal hold targets once and keep flying
+        # straight and level at the stored speed/altitude/heading targets.
         if self.current_wp_idx >= len(self.waypoints):
             self.completed = True
-            mover.thrust_cmd = 0.0
-            mover.roll_cmd = 0.0
-            mover.pitch_cmd = 0.0
-            mover.yaw_cmd = 0.0
+            if not self.hold_active:
+                self._enter_hold_mode(mover)
+            self._update_hold_mode(mover)
             return
+
+        # Any live waypoint target takes precedence over hold mode.
         self.completed = False
+        self.hold_active = False
 
         pos = mover.position
         # Consume any waypoint whose capture sphere already contains the aircraft. This
@@ -941,10 +972,9 @@ class FixedWingAutopilot(Controller):
         # Guidance-command logic only runs while there is still an active target waypoint.
         if self.current_wp_idx >= len(self.waypoints):
             self.completed = True
-            mover.thrust_cmd = 0.0
-            mover.roll_cmd = 0.0
-            mover.pitch_cmd = 0.0
-            mover.yaw_cmd = 0.0
+            if not self.hold_active:
+                self._enter_hold_mode(mover)
+            self._update_hold_mode(mover)
             return
 
         vel = mover.velocity

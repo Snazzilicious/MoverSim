@@ -756,6 +756,110 @@ def test_fixed_wing_autopilot_hold_heading_error_falls_back_to_projected_body_fo
     assert np.isclose(autopilot._hold_heading_error(mover), 0.0, atol=1e-9)
 
 
+def test_fixed_wing_autopilot_update_hold_mode_generates_commands_from_hold_targets():
+    pos = lla_to_ecef(0.0, 0.0, 2000.0)
+    vel = np.array([0.0, 180.0, 0.0])
+    mover = FixedWingMover(pos, vel, use_coriolis=False)
+    autopilot = FixedWingAutopilot([], target_speed=190.0)
+
+    local_up = pos / np.linalg.norm(pos)
+    current_horizontal = vel / np.linalg.norm(vel)
+    left_turn_direction = np.cross(local_up, current_horizontal)
+    left_turn_direction /= np.linalg.norm(left_turn_direction)
+
+    autopilot.hold_active = True
+    autopilot.hold_horizontal_direction = left_turn_direction
+    autopilot.hold_altitude = 2400.0
+    autopilot.hold_speed = 220.0
+
+    autopilot._update_hold_mode(mover)
+
+    assert mover.roll_cmd > 0.0
+    assert mover.pitch_cmd > 0.0
+    assert mover.thrust_cmd > 0.0
+    assert mover.yaw_cmd == 0.0
+    assert abs(mover.roll_cmd) <= 100.0
+    assert abs(mover.pitch_cmd) <= 100.0
+    assert 0.0 <= mover.thrust_cmd <= 100.0
+
+
+def test_fixed_wing_autopilot_update_hold_mode_uses_hold_speed_target():
+    pos = lla_to_ecef(0.0, 0.0, 2000.0)
+    vel = np.array([0.0, 180.0, 0.0])
+    low_speed_mover = FixedWingMover(pos, vel, use_coriolis=False)
+    high_speed_mover = FixedWingMover(pos, vel, use_coriolis=False)
+    low_speed_autopilot = FixedWingAutopilot([], target_speed=190.0)
+    high_speed_autopilot = FixedWingAutopilot([], target_speed=190.0)
+
+    aligned_direction = vel / np.linalg.norm(vel)
+    for autopilot, hold_speed in ((low_speed_autopilot, 120.0), (high_speed_autopilot, 260.0)):
+        autopilot.hold_active = True
+        autopilot.hold_horizontal_direction = aligned_direction
+        autopilot.hold_altitude = 2000.0
+        autopilot.hold_speed = hold_speed
+
+    low_speed_autopilot._update_hold_mode(low_speed_mover)
+    high_speed_autopilot._update_hold_mode(high_speed_mover)
+
+    assert np.isclose(low_speed_mover.roll_cmd, 0.0, atol=1e-9)
+    assert np.isclose(high_speed_mover.roll_cmd, 0.0, atol=1e-9)
+    assert low_speed_mover.thrust_cmd < high_speed_mover.thrust_cmd
+
+
+def test_fixed_wing_autopilot_update_enters_hold_mode_for_empty_route():
+    pos = lla_to_ecef(0.0, 0.0, 2000.0)
+    vel = np.array([0.0, 180.0, 0.0])
+    mover = FixedWingMover(pos, vel, use_coriolis=False)
+    autopilot = FixedWingAutopilot([], target_speed=220.0)
+    engine = SimulationEngine()
+    engine.register_platform(Platform("fixed_wing_hold", mover, autopilot))
+
+    autopilot.update(0.0, engine)
+
+    assert autopilot.completed is True
+    assert autopilot.hold_active is True
+    assert autopilot.hold_speed == 220.0
+    assert mover.thrust_cmd > 0.0
+    assert mover.yaw_cmd == 0.0
+
+
+def test_fixed_wing_autopilot_update_enters_hold_mode_after_final_waypoint():
+    pos = lla_to_ecef(0.0, 0.0, 2000.0)
+    vel = np.array([0.0, 180.0, 0.0])
+    wp = pos
+    mover = FixedWingMover(pos, vel, use_coriolis=False)
+    autopilot = FixedWingAutopilot([wp], target_speeds=[210.0], waypoint_radius=100.0)
+    engine = SimulationEngine()
+    engine.register_platform(Platform("fixed_wing_hold", mover, autopilot))
+
+    autopilot.update(0.0, engine)
+
+    assert autopilot.current_wp_idx == 1
+    assert autopilot.completed is True
+    assert autopilot.hold_active is True
+    assert autopilot.hold_speed == 210.0
+    assert mover.thrust_cmd > 0.0
+
+
+def test_fixed_wing_autopilot_update_disables_hold_mode_when_waypoint_guidance_is_active():
+    pos = lla_to_ecef(0.0, 0.0, 2000.0)
+    vel = np.array([0.0, 180.0, 0.0])
+    wp = lla_to_ecef(0.0, 0.02, 2200.0)
+    mover = FixedWingMover(pos, vel, use_coriolis=False)
+    autopilot = FixedWingAutopilot([wp], target_speed=220.0)
+    autopilot.hold_active = True
+    autopilot.hold_speed = 150.0
+    autopilot.hold_altitude = 1800.0
+    autopilot.hold_horizontal_direction = np.array([1.0, 0.0, 0.0])
+    engine = SimulationEngine()
+    engine.register_platform(Platform("fixed_wing_route", mover, autopilot))
+
+    autopilot.update(0.0, engine)
+
+    assert autopilot.completed is False
+    assert autopilot.hold_active is False
+
+
 def test_fixed_wing_autopilot_update_does_not_advance_outside_radius():
     pos = lla_to_ecef(0.0, 0.0, 2000.0)
     vel = np.array([0.0, 180.0, 0.0])
@@ -863,7 +967,7 @@ def test_fixed_wing_autopilot_update_uses_active_waypoint_speed_target_after_adv
     assert low_speed_mover.thrust_cmd < high_speed_mover.thrust_cmd
 
 
-def test_fixed_wing_autopilot_update_zeroes_commands_when_completed():
+def test_fixed_wing_autopilot_update_uses_hold_mode_when_already_completed():
     pos = lla_to_ecef(0.0, 0.0, 2000.0)
     vel = np.array([0.0, 180.0, 0.0])
     wp = lla_to_ecef(0.0, 0.02, 2000.0)
@@ -881,9 +985,9 @@ def test_fixed_wing_autopilot_update_zeroes_commands_when_completed():
     autopilot.update(0.0, engine)
 
     assert autopilot.completed is True
-    assert mover.thrust_cmd == 0.0
-    assert mover.roll_cmd == 0.0
-    assert mover.pitch_cmd == 0.0
+    assert autopilot.hold_active is True
+    assert autopilot.hold_speed == 220.0
+    assert mover.thrust_cmd > 0.0
     assert mover.yaw_cmd == 0.0
 
 
