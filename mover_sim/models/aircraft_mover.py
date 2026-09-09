@@ -496,6 +496,12 @@ class FixedWingMover(TranslationalMover, IntegratedMover):
         cd_beta=0.3,
         cl_alpha=4.5,
         cy_beta=-1.5,
+        bank_restoring_coeff=2.0e4,
+        alpha_restoring_coeff=3.0e4,
+        beta_restoring_coeff=2.0e4,
+        roll_damping_coeff=1.5e4,
+        pitch_damping_coeff=2.0e4,
+        yaw_damping_coeff=1.5e4,
         t_max=80000.0,
         max_roll_moment=5.0e4,
         max_pitch_moment=5.0e4,
@@ -517,6 +523,12 @@ class FixedWingMover(TranslationalMover, IntegratedMover):
             cd_beta: Additional drag coefficient applied with `beta^2`.
             cl_alpha: Lift slope coefficient in body-up direction.
             cy_beta: Sideslip slope coefficient in body-right direction.
+            bank_restoring_coeff: Roll restoring moment per radian of bank error.
+            alpha_restoring_coeff: Pitch restoring moment per radian of angle of attack.
+            beta_restoring_coeff: Yaw restoring moment per radian of sideslip angle.
+            roll_damping_coeff: Roll damping moment per rad/s of body roll rate.
+            pitch_damping_coeff: Pitch damping moment per rad/s of body pitch rate.
+            yaw_damping_coeff: Yaw damping moment per rad/s of body yaw rate.
             t_max: Maximum thrust in Newtons.
             max_roll_moment: Maximum roll moment in N*m.
             max_pitch_moment: Maximum pitch moment in N*m.
@@ -571,6 +583,12 @@ class FixedWingMover(TranslationalMover, IntegratedMover):
         self.cd_beta = float(cd_beta)
         self.cl_alpha = float(cl_alpha)
         self.cy_beta = float(cy_beta)
+        self.bank_restoring_coeff = float(bank_restoring_coeff)
+        self.alpha_restoring_coeff = float(alpha_restoring_coeff)
+        self.beta_restoring_coeff = float(beta_restoring_coeff)
+        self.roll_damping_coeff = float(roll_damping_coeff)
+        self.pitch_damping_coeff = float(pitch_damping_coeff)
+        self.yaw_damping_coeff = float(yaw_damping_coeff)
         self.max_thrust = float(t_max)
         self.t_max = self.max_thrust
         self.max_roll_moment = float(max_roll_moment)
@@ -624,23 +642,45 @@ class FixedWingMover(TranslationalMover, IntegratedMover):
         # Thrust is applied along the body forward axis with a 0-100 percent command.
         return ( self.thrust_cmd / 100.0 ) * self.max_thrust * forward
 
+    def _aerodynamic_angles(self, pos, vel, orientation):
+        speed = np.linalg.norm(vel)
+        if speed < 1e-6:
+            return speed, 0.0, 0.0, 0.0
+
+        v_hat = vel / speed
+        velocity_body = orientation.T @ vel
+        forward_speed = max(velocity_body[0], 1e-6)
+        alpha = np.arctan2(-velocity_body[2], forward_speed)
+        beta = np.arctan2(velocity_body[1], forward_speed)
+
+        local_up = pos / max(np.linalg.norm(pos), 1e-6)
+        up_reference = local_up - np.dot(local_up, v_hat) * v_hat
+        body_up = orientation[:, 2] - np.dot(orientation[:, 2], v_hat) * v_hat
+
+        up_reference_norm = np.linalg.norm(up_reference)
+        body_up_norm = np.linalg.norm(body_up)
+        if up_reference_norm < 1e-6 or body_up_norm < 1e-6:
+            bank_error = 0.0
+        else:
+            up_reference /= up_reference_norm
+            body_up /= body_up_norm
+            bank_error = np.arctan2(
+                np.dot(np.cross(up_reference, body_up), v_hat),
+                np.clip(np.dot(up_reference, body_up), -1.0, 1.0),
+            )
+
+        return speed, alpha, beta, bank_error
+
     def _aerodynamic_force(self, pos, vel, orientation):
         # Use a simple body-axis aerodynamic model driven by air-relative attitude:
         # x: quadratic drag, y: sideslip force proportional to beta, z: lift proportional to alpha.
-        speed = np.linalg.norm(vel)
+        speed, alpha, beta, _ = self._aerodynamic_angles(pos, vel, orientation)
         if speed < 1e-6 or self.area <= 0.0:
             return np.zeros(3)
 
         _, _, alt = ecef_to_lla(pos[0], pos[1], pos[2])
         rho = air_density(alt)
         dynamic_pressure = 0.5 * rho * (speed ** 2)
-
-        # Express the velocity in body coordinates so angle of attack and sideslip come
-        # directly from how the relative wind is seen by the aircraft frame.
-        velocity_body = orientation.T @ vel
-        forward_speed = max(velocity_body[0], 1e-6)
-        alpha = np.arctan2(-velocity_body[2], forward_speed)
-        beta = np.arctan2(velocity_body[1], forward_speed)
 
         # Drag grows with alpha^2 and beta^2 while lift and side force remain linear in
         # small-angle alpha/beta for a simple, tunable fixed-wing approximation.
@@ -671,16 +711,32 @@ class FixedWingMover(TranslationalMover, IntegratedMover):
         """
         magnitude = (self.yaw_cmd / 100.0) * self.max_yaw_moment
         return magnitude * np.outer( right, forward )
-    
-    def _nose_restoring_force( self, forward, velocity ):
-        """Stabilizing force which pulls the nose in line with the velocity
-        """
-        return np.zeros((3, 3))
-    
-    def _roll_restoring_force( self, up, velocity ):
-        """Stabilizing force which pulls the wings perpendicular with the velocity
-        """
-        return np.zeros((3, 3))
+
+    def _restoring_moment_components(self, pos, vel, orientation, omega_body):
+        # The restoring model is purely aerodynamic: it vanishes at low airspeed and uses
+        # alpha, beta, and bank error plus body-rate damping to oppose misalignment.
+        speed, alpha, beta, bank_error = self._aerodynamic_angles(pos, vel, orientation)
+        if speed < 1e-6:
+            return np.zeros(3)
+
+        return np.array([
+            -self.bank_restoring_coeff * bank_error - self.roll_damping_coeff * omega_body[0],
+            -self.alpha_restoring_coeff * alpha + self.pitch_damping_coeff * omega_body[1],
+            self.beta_restoring_coeff * beta - self.yaw_damping_coeff * omega_body[2],
+        ])
+
+    def _restoring_moment(self, pos, vel, orientation, omega_body):
+        # Reuse the same body-axis actuation geometry as the commanded roll/pitch/yaw
+        # moments so passive stability and control inputs combine in one convention.
+        forward = orientation[:, 0]
+        right = orientation[:, 1]
+        up = orientation[:, 2]
+        roll_mag, pitch_mag, yaw_mag = self._restoring_moment_components(pos, vel, orientation, omega_body)
+        return (
+            roll_mag * np.outer(up, right)
+            + pitch_mag * np.outer(up, forward)
+            + yaw_mag * np.outer(right, forward)
+        )
     
 
     def compute_state_derivative(self, t, state):
@@ -689,8 +745,8 @@ class FixedWingMover(TranslationalMover, IntegratedMover):
         vel = state[self.get_velocity_slice()]
         orientation = state[self.get_orientation_slice()].reshape((3,3))
         orientation = project_to_rotation_matrix(orientation)
-        omega = state[self.get_omega_slice()]
-        omega = vector_to_skew_symmetric( omega )
+        omega_body = state[self.get_omega_slice()]
+        omega = vector_to_skew_symmetric( omega_body )
 
         forward = orientation[:,0]
         right = orientation[:,1]
@@ -721,8 +777,7 @@ class FixedWingMover(TranslationalMover, IntegratedMover):
         body_moment = self._roll_moment( up, right )
         body_moment += self._pitch_moment( up, forward )
         body_moment += self._yaw_moment( right, forward )
-        body_moment += self._nose_restoring_force( forward, vel )
-        body_moment += self._roll_restoring_force( up, vel )
+        body_moment += self._restoring_moment(pos, vel, orientation, omega_body)
 
         domega = orientation.T @ body_moment
         domega = np.linalg.solve( self.rotational_mass.T, domega.T ).T
@@ -733,7 +788,7 @@ class FixedWingMover(TranslationalMover, IntegratedMover):
 
 
 class FixedWingAutopilot(Controller):
-    def __init__( self, route ):
+    def __init__( self, waypoints, target_speeds, waypoint_radius=500.0, update_interval=0.1 ):
         super().__init__()
         self.route = route
 

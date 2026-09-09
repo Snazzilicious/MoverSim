@@ -35,6 +35,16 @@ def _rotation_about_body_up(angle_rad):
         [0.0, 0.0, 1.0],
     ])
 
+
+def _rotation_about_body_forward(angle_rad):
+    c = np.cos(angle_rad)
+    s = np.sin(angle_rad)
+    return np.array([
+        [1.0, 0.0, 0.0],
+        [0.0, c, -s],
+        [0.0, s, c],
+    ])
+
 def test_aircraft_mover_initialization():
     pos = lla_to_ecef(0.0, 0.0, 5000.0)
     vel = [150.0, 0.0, 0.0]
@@ -351,3 +361,33 @@ def test_fixed_wing_aerodynamic_force_opposes_positive_sideslip():
 
     assert lateral_velocity_body[1] > 0.0
     assert np.dot(aero_force, yawed_orientation[:, 1]) < 0.0
+
+
+def test_fixed_wing_restoring_moment_opposes_positive_bank_error():
+    pos = lla_to_ecef(0.0, 0.0, 2000.0)
+    vel = np.array([0.0, 180.0, 0.0])
+    mover = FixedWingMover(pos, vel, use_coriolis=False)
+
+    banked_orientation = mover.orientation @ _rotation_about_body_forward(np.radians(10.0))
+    restoring = mover._restoring_moment_components(pos, vel, banked_orientation, np.zeros(3))
+
+    assert restoring[0] < 0.0
+
+
+def test_fixed_wing_restoring_moment_opposes_alpha_beta_and_rates():
+    pos = lla_to_ecef(0.0, 0.0, 2000.0)
+    vel = np.array([0.0, 180.0, 0.0])
+    mover = FixedWingMover(pos, vel, use_coriolis=False)
+
+    pitched_orientation = mover.orientation @ _rotation_about_body_right(np.radians(10.0))
+    alpha_restoring = mover._restoring_moment_components(pos, vel, pitched_orientation, np.zeros(3))
+    assert alpha_restoring[1] < 0.0
+
+    yawed_orientation = mover.orientation @ _rotation_about_body_up(np.radians(-10.0))
+    beta_restoring = mover._restoring_moment_components(pos, vel, yawed_orientation, np.zeros(3))
+    assert beta_restoring[2] > 0.0
+
+    damping = mover._restoring_moment_components(pos, vel, mover.orientation, np.array([0.2, -0.3, 0.4]))
+    assert damping[0] < 0.0
+    assert damping[1] < 0.0
+    assert damping[2] < 0.0

@@ -1,8 +1,6 @@
 
 ### FixedWingMover
 
-* force models incomplete
-    * need damping model
 * Autopilot is just a stub
 Tests
     All methods
@@ -10,8 +8,6 @@ Tests
 ### Grand TODO
 
 * Redesign Aircraft movers
-    * Standard damping & equilibrium dynamics for control axes
-        * (restoring forces)
     * Fixed wing mover
         * tests for physical behavior
     * Fixed wing autopilot
