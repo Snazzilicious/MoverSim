@@ -847,13 +847,72 @@ class FixedWingAutopilot(Controller):
             if np.any(self.target_speeds < 0.0):
                 raise ValueError("target_speeds must be non-negative")
 
+    def _flight_condition(self, mover):
+        pos = mover.position
+        vel = mover.velocity
+        speed = np.linalg.norm(vel)
+        local_up = pos / max(np.linalg.norm(pos), 1e-6)
+        alt = ecef_to_lla(pos[0], pos[1], pos[2])[2]
+        return pos, vel, speed, local_up, alt
+
+    def _heading_error_to_direction(self, mover, target_horizontal_direction, pos=None, vel=None, local_up=None):
+        # Returns the signed horizontal heading error in radians from the current track
+        # to `target_horizontal_direction`; positive means turn left, negative turn right.
+        if target_horizontal_direction is None:
+            return 0.0
+
+        if pos is None or vel is None or local_up is None:
+            pos, vel, _, local_up, _ = self._flight_condition(mover)
+
+        target_horizontal_direction = np.asarray(target_horizontal_direction, dtype=float)
+        target_norm = np.linalg.norm(target_horizontal_direction)
+        if target_norm <= 1e-6:
+            return 0.0
+        target_horizontal_direction = target_horizontal_direction / target_norm
+
+        current_horizontal = vel - np.dot(vel, local_up) * local_up
+        current_horizontal_norm = np.linalg.norm(current_horizontal)
+        if current_horizontal_norm > 1e-6:
+            current_horizontal = current_horizontal / current_horizontal_norm
+        else:
+            # When the horizontal velocity nearly vanishes, use the projected body-forward
+            # direction so guidance still has a meaningful heading reference.
+            current_horizontal = mover.orientation[:, 0] - np.dot(mover.orientation[:, 0], local_up) * local_up
+            current_horizontal_norm = np.linalg.norm(current_horizontal)
+            if current_horizontal_norm <= 1e-6:
+                return 0.0
+            current_horizontal = current_horizontal / current_horizontal_norm
+
+        return np.arctan2(
+            np.dot(np.cross(current_horizontal, target_horizontal_direction), local_up),
+            np.clip(np.dot(current_horizontal, target_horizontal_direction), -1.0, 1.0),
+        )
+
+    def _apply_guidance(self, mover, heading_error, vertical_error, target_speed, vel=None, speed=None, local_up=None, alt=None):
+        if vel is None or speed is None or local_up is None or alt is None:
+            _, vel, speed, local_up, alt = self._flight_condition(mover)
+
+        desired_climb_rate = np.clip(
+            self.k_altitude * vertical_error,
+            -self.max_climb_rate,
+            self.max_climb_rate,
+        )
+        actual_climb_rate = np.dot(vel, local_up)
+        climb_rate_error = desired_climb_rate - actual_climb_rate
+
+        drag_force_mag = np.linalg.norm(aerodynamic_drag_force(vel, alt, mover.cd0, mover.area))
+        thrust_trim = 100.0 * drag_force_mag / max(mover.max_thrust, 1e-6)
+
+        mover.roll_cmd = np.clip(self.k_heading * heading_error, -100.0, 100.0)
+        mover.pitch_cmd = np.clip(self.k_climb_rate * climb_rate_error, -100.0, 100.0)
+        mover.thrust_cmd = np.clip(thrust_trim + self.k_speed * (target_speed - speed), 0.0, 100.0)
+        mover.yaw_cmd = 0.0
+
     def _enter_hold_mode(self, mover):
         if self.hold_active:
             return
 
-        pos = mover.position
-        vel = mover.velocity
-        local_up = pos / max(np.linalg.norm(pos), 1e-6)
+        pos, vel, _, local_up, alt = self._flight_condition(mover)
 
         # Prefer the current horizontal flight direction so terminal hold continues from
         # the aircraft's actual track rather than snapping to its body heading.
@@ -881,63 +940,64 @@ class FixedWingAutopilot(Controller):
         # default cruise target is used for empty-route hold mode.
         self.hold_active = True
         self.hold_speed = self.target_speeds[-1] if len(self.target_speeds) > 0 else self.target_speed
-        self.hold_altitude = ecef_to_lla(pos[0], pos[1], pos[2])[2]
+        self.hold_altitude = alt
         self.hold_horizontal_direction = hold_horizontal_direction
 
-    def _hold_heading_error(self, mover):
-        # Returns the signed horizontal heading error in radians from the current track
-        # to the stored hold direction; positive means turn left, negative turn right.
-        if self.hold_horizontal_direction is None:
-            return 0.0
-
-        pos = mover.position
-        vel = mover.velocity
-        local_up = pos / max(np.linalg.norm(pos), 1e-6)
-
-        current_horizontal = vel - np.dot(vel, local_up) * local_up
-        current_horizontal_norm = np.linalg.norm(current_horizontal)
-        if current_horizontal_norm > 1e-6:
-            current_horizontal = current_horizontal / current_horizontal_norm
-        else:
-            # When the horizontal velocity nearly vanishes, use the projected body-forward
-            # direction so hold mode still has a meaningful heading reference.
-            current_horizontal = mover.orientation[:, 0] - np.dot(mover.orientation[:, 0], local_up) * local_up
-            current_horizontal_norm = np.linalg.norm(current_horizontal)
-            if current_horizontal_norm <= 1e-6:
-                return 0.0
-            current_horizontal = current_horizontal / current_horizontal_norm
-
-        return np.arctan2(
-            np.dot(np.cross(current_horizontal, self.hold_horizontal_direction), local_up),
-            np.clip(np.dot(current_horizontal, self.hold_horizontal_direction), -1.0, 1.0),
-        )
-
     def _update_hold_mode(self, mover):
-        pos = mover.position
-        vel = mover.velocity
-        speed = np.linalg.norm(vel)
-        local_up = pos / max(np.linalg.norm(pos), 1e-6)
-
-        heading_error = self._hold_heading_error(mover)
-        current_altitude = ecef_to_lla(pos[0], pos[1], pos[2])[2]
+        _, vel, speed, local_up, current_altitude = self._flight_condition(mover)
+        heading_error = self._heading_error_to_direction(
+            mover,
+            self.hold_horizontal_direction,
+        )
         target_altitude = current_altitude if self.hold_altitude is None else self.hold_altitude
         vertical_error = target_altitude - current_altitude
-        desired_climb_rate = np.clip(
-            self.k_altitude * vertical_error,
-            -self.max_climb_rate,
-            self.max_climb_rate,
-        )
-        actual_climb_rate = np.dot(vel, local_up)
-        climb_rate_error = desired_climb_rate - actual_climb_rate
-
-        drag_force_mag = np.linalg.norm(aerodynamic_drag_force(vel, current_altitude, mover.cd0, mover.area))
-        thrust_trim = 100.0 * drag_force_mag / max(mover.max_thrust, 1e-6)
         target_speed = speed if self.hold_speed is None else self.hold_speed
+        self._apply_guidance(
+            mover,
+            heading_error,
+            vertical_error,
+            target_speed,
+            vel=vel,
+            speed=speed,
+            local_up=local_up,
+            alt=current_altitude,
+        )
 
-        mover.roll_cmd = np.clip(self.k_heading * heading_error, -100.0, 100.0)
-        mover.pitch_cmd = np.clip(self.k_climb_rate * climb_rate_error, -100.0, 100.0)
-        mover.thrust_cmd = np.clip(thrust_trim + self.k_speed * (target_speed - speed), 0.0, 100.0)
-        mover.yaw_cmd = 0.0
+    def _update_waypoint_guidance(self, mover):
+        pos, vel, speed, local_up, alt = self._flight_condition(mover)
+        wp_target = self.waypoints[self.current_wp_idx]
+        target_speed = self.target_speeds[self.current_wp_idx]
+
+        # Steer by comparing the current horizontal flight direction to the horizontal
+        # direction from the aircraft to the active waypoint.
+        rel_pos = wp_target - pos
+        rel_horizontal = rel_pos - np.dot(rel_pos, local_up) * local_up
+        rel_horizontal_norm = np.linalg.norm(rel_horizontal)
+        if rel_horizontal_norm > 1e-6:
+            desired_horizontal = rel_horizontal / rel_horizontal_norm
+            heading_error = self._heading_error_to_direction(
+                mover,
+                desired_horizontal,
+                pos=pos,
+                vel=vel,
+                local_up=local_up,
+            )
+        else:
+            heading_error = 0.0
+
+        # Convert altitude error into a bounded climb-rate target, then use pitch to
+        # drive the actual climb rate toward that target.
+        vertical_error = np.dot(rel_pos, local_up)
+        self._apply_guidance(
+            mover,
+            heading_error,
+            vertical_error,
+            target_speed,
+            vel=vel,
+            speed=speed,
+            local_up=local_up,
+            alt=alt,
+        )
 
     def update( self, t, engine ):
         """Adjusts thrust, roll, pitch, yaw commands to remain on course.
@@ -977,52 +1037,7 @@ class FixedWingAutopilot(Controller):
             self._update_hold_mode(mover)
             return
 
-        vel = mover.velocity
-        speed = np.linalg.norm(vel)
-        local_up = pos / max(np.linalg.norm(pos), 1e-6)
-        wp_target = self.waypoints[self.current_wp_idx]
-        target_speed = self.target_speeds[self.current_wp_idx]
-
-        # Steer by comparing the current horizontal flight direction to the horizontal
-        # direction from the aircraft to the active waypoint.
-        rel_pos = wp_target - pos
-        rel_horizontal = rel_pos - np.dot(rel_pos, local_up) * local_up
-        vel_horizontal = vel - np.dot(vel, local_up) * local_up
-        rel_horizontal_norm = np.linalg.norm(rel_horizontal)
-        vel_horizontal_norm = np.linalg.norm(vel_horizontal)
-        if rel_horizontal_norm > 1e-6 and vel_horizontal_norm > 1e-6:
-            desired_horizontal = rel_horizontal / rel_horizontal_norm
-            current_horizontal = vel_horizontal / vel_horizontal_norm
-            heading_error = np.arctan2(
-                np.dot(np.cross(current_horizontal, desired_horizontal), local_up),
-                np.clip(np.dot(current_horizontal, desired_horizontal), -1.0, 1.0),
-            )
-        else:
-            heading_error = 0.0
-
-        # Convert altitude error into a bounded climb-rate target, then use pitch to
-        # drive the actual climb rate toward that target.
-        vertical_error = np.dot(rel_pos, local_up)
-        desired_climb_rate = np.clip(
-            self.k_altitude * vertical_error,
-            -self.max_climb_rate,
-            self.max_climb_rate,
-        )
-        actual_climb_rate = np.dot(vel, local_up)
-        climb_rate_error = desired_climb_rate - actual_climb_rate
-
-        # Use aerodynamic drag as a crude trim-thrust estimate so the proportional speed
-        # controller only needs to correct the difference to the waypoint speed target.
-        _, _, alt = ecef_to_lla(pos[0], pos[1], pos[2])
-        drag_force_mag = np.linalg.norm(aerodynamic_drag_force(vel, alt, mover.cd0, mover.area))
-        thrust_trim = 100.0 * drag_force_mag / max(mover.max_thrust, 1e-6)
-
-        # Keep the first-pass controller simple: roll for heading, pitch for climb rate,
-        # thrust for speed, and leave yaw neutral while airframe stability damps slip.
-        mover.roll_cmd = np.clip(self.k_heading * heading_error, -100.0, 100.0)
-        mover.pitch_cmd = np.clip(self.k_climb_rate * climb_rate_error, -100.0, 100.0)
-        mover.thrust_cmd = np.clip(thrust_trim + self.k_speed * (target_speed - speed), 0.0, 100.0)
-        mover.yaw_cmd = 0.0
+        self._update_waypoint_guidance(mover)
 
         return
 

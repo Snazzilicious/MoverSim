@@ -716,7 +716,11 @@ def test_fixed_wing_autopilot_hold_heading_error_is_zero_when_aligned():
     autopilot = FixedWingAutopilot([], target_speed=190.0)
     autopilot.hold_horizontal_direction = vel / np.linalg.norm(vel)
 
-    assert np.isclose(autopilot._hold_heading_error(mover), 0.0, atol=1e-9)
+    assert np.isclose(
+        autopilot._heading_error_to_direction(mover, autopilot.hold_horizontal_direction),
+        0.0,
+        atol=1e-9,
+    )
 
 
 def test_fixed_wing_autopilot_hold_heading_error_has_expected_sign():
@@ -731,9 +735,9 @@ def test_fixed_wing_autopilot_hold_heading_error_has_expected_sign():
     left_turn_direction /= np.linalg.norm(left_turn_direction)
 
     autopilot.hold_horizontal_direction = left_turn_direction
-    left_error = autopilot._hold_heading_error(mover)
+    left_error = autopilot._heading_error_to_direction(mover, autopilot.hold_horizontal_direction)
     autopilot.hold_horizontal_direction = -left_turn_direction
-    right_error = autopilot._hold_heading_error(mover)
+    right_error = autopilot._heading_error_to_direction(mover, autopilot.hold_horizontal_direction)
 
     assert left_error > 0.0
     assert right_error < 0.0
@@ -753,7 +757,11 @@ def test_fixed_wing_autopilot_hold_heading_error_falls_back_to_projected_body_fo
     autopilot.hold_horizontal_direction = base_mover.orientation[:, 0] - np.dot(base_mover.orientation[:, 0], local_up) * local_up
     autopilot.hold_horizontal_direction /= np.linalg.norm(autopilot.hold_horizontal_direction)
 
-    assert np.isclose(autopilot._hold_heading_error(mover), 0.0, atol=1e-9)
+    assert np.isclose(
+        autopilot._heading_error_to_direction(mover, autopilot.hold_horizontal_direction),
+        0.0,
+        atol=1e-9,
+    )
 
 
 def test_fixed_wing_autopilot_update_hold_mode_generates_commands_from_hold_targets():
