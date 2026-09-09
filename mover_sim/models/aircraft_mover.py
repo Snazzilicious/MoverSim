@@ -491,6 +491,13 @@ class FixedWingMover(TranslationalMover, IntegratedMover):
         mass=10000.0,
         rotational_mass=None,
         t_max=80000.0,
+        area=30.0,
+        cd0=0.02,
+        cl0=0.2,
+        max_roll_moment=5.0e4,
+        max_pitch_moment=5.0e4,
+        max_yaw_moment=2.0e4,
+        side_force_coeff=10.0,
         use_coriolis=True,
     ):
         """
@@ -503,6 +510,13 @@ class FixedWingMover(TranslationalMover, IntegratedMover):
             mass: Vehicle mass in kg.
             rotational_mass: Body inertia as a `(3, 3)` tensor or `(3,)` principal moments.
             t_max: Maximum thrust in Newtons.
+            area: Wing reference area in m^2.
+            cd0: Zero-lift drag coefficient.
+            cl0: Base lift coefficient.
+            max_roll_moment: Maximum roll moment in N*m.
+            max_pitch_moment: Maximum pitch moment in N*m.
+            max_yaw_moment: Maximum yaw moment in N*m.
+            side_force_coeff: Sideslip damping coefficient.
             use_coriolis: If True, include Coriolis acceleration in world-frame translation.
 
         State layout:
@@ -549,6 +563,13 @@ class FixedWingMover(TranslationalMover, IntegratedMover):
         self.inv_rotational_mass = np.linalg.inv(self.rotational_mass)
         self.max_thrust = float(t_max)
         self.t_max = self.max_thrust
+        self.area = float(area)
+        self.cd0 = float(cd0)
+        self.cl0 = float(cl0)
+        self.max_roll_moment = float(max_roll_moment)
+        self.max_pitch_moment = float(max_pitch_moment)
+        self.max_yaw_moment = float(max_yaw_moment)
+        self.side_force_coeff = float(side_force_coeff)
         self.use_coriolis = bool(use_coriolis)
 
         # All 0-100
@@ -597,32 +618,53 @@ class FixedWingMover(TranslationalMover, IntegratedMover):
         return ( self.thrust_cmd / 100.0 ) * self.max_thrust * forward
     
     def _drag_vector( self, forward ):
-        raise NotImplementedError
+        pos = self.position
+        vel = self.velocity
+        alt = ecef_to_lla(pos[0], pos[1], pos[2])[2]
+        return aerodynamic_drag_force(vel, alt, self.cd0, self.area)
     
     def _lift_vector( self, up ):
-        raise NotImplementedError
+        pos = self.position
+        vel = self.velocity
+        v_mag = np.linalg.norm(vel)
+        if v_mag < 1e-6:
+            return np.zeros(3)
+        alt = ecef_to_lla(pos[0], pos[1], pos[2])[2]
+        rho = air_density(alt)
+        cl = self.cl0 + 0.1 * (self.pitch_cmd / 100.0)
+        lift_mag = 0.5 * rho * (v_mag ** 2) * self.area * cl
+        return lift_mag * up
     
     def _slip_vector( self, right ):
-        """Sideways force due to yaw
+        """Sideways force due to yaw / sideslip
         """
-        raise NotImplementedError
+        vel = self.velocity
+        v_mag = np.linalg.norm(vel)
+        if v_mag < 1e-6:
+            return np.zeros(3)
+        pos = self.position
+        alt = ecef_to_lla(pos[0], pos[1], pos[2])[2]
+        rho = air_density(alt)
+        v_side = np.dot(vel, right)
+        slip_force_mag = 0.5 * rho * v_mag * self.area * self.side_force_coeff * v_side
+        return -slip_force_mag * right
     
     def _roll_force( self, up, right ):
         """Applies force in up direction at position 1.0*right
         """
-        raise NotImplementedError
+        magnitude = (self.roll_cmd / 100.0) * self.max_roll_moment
         return magnitude * np.outer( up, right )
     
     def _pitch_force( self, up, forward ):
         """Applies force in up direction at position 1.0*forward
         """
-        raise NotImplementedError
+        magnitude = (self.pitch_cmd / 100.0) * self.max_pitch_moment
         return magnitude * np.outer( up, forward )
     
     def _yaw_force( self, right, forward ):
         """Applies force in right direction at position 1.0*forward
         """
-        raise NotImplementedError
+        magnitude = (self.yaw_cmd / 100.0) * self.max_yaw_moment
         return magnitude * np.outer( right, forward )
     
     def _nose_restoring_force( self, forward, velocity ):

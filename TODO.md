@@ -12,10 +12,10 @@ Tests
 ### Grand TODO
 
 * Redesign Aircraft movers
-    * Coriolis update
-        * must include orientation change (just subtract earth's rotation from A')
     * Standard damping & equilibrium dynamics for control axes
         * (restoring forces)
+    * lift, drag, slip forces update
+        * function of attitude relative to velocity
     * Fixed wing mover
     * Fixed wing autopilot
         * Intelligence to pick the appropriate inputs
