@@ -16,14 +16,17 @@ Tests
     * lift, drag, slip forces update
         * function of attitude relative to velocity
     * Fixed wing mover
+        * tests for physical behavior
     * Fixed wing autopilot
+        * tests for tracking a route
         * Intelligence to pick the appropriate inputs
     * Rocket mover
     * Rocket guidance
     * Ballistic mover
     * Remove old aircraft mover(s)
-        * Rewrite scenarios
+        * Aircraft6DOFMover, Aircraft6DOFAutopilot
         * Update AircraftSplineMover to use fru instead of quaternions 
+        * Rewrite scenarios
     * Remove quaternions everywhere
         * redesign AircraftSplineMover
     * Update logging
