@@ -338,6 +338,249 @@ def test_aircraft_6dof_autopilot_changes_trajectory_toward_waypoint():
     assert alt_end > alt0 - 300.0
 
 
+def test_fixed_wing_initial_orientation_is_orthonormal():
+    pos = lla_to_ecef(0.0, 0.0, 2000.0)
+    vel = np.array([0.0, 180.0, 0.0])
+
+    mover = FixedWingMover(pos, vel, use_coriolis=False)
+    orientation = mover.orientation
+    forward = orientation[:, 0]
+
+    assert np.allclose(orientation.T @ orientation, np.eye(3), atol=1e-7)
+    assert np.isclose(np.linalg.det(orientation), 1.0, atol=1e-7)
+    assert np.allclose(forward, vel / np.linalg.norm(vel), atol=1e-7)
+
+
+def test_fixed_wing_projects_non_orthonormal_initial_orientation():
+    pos = lla_to_ecef(0.0, 0.0, 2000.0)
+    vel = np.array([0.0, 180.0, 0.0])
+    noisy_orientation = np.array([
+        [1.0, 0.05, 0.0],
+        [0.0, 0.98, -0.08],
+        [0.03, 0.02, 1.02],
+    ])
+
+    mover = FixedWingMover(pos, vel, initial_orientation=noisy_orientation, use_coriolis=False)
+    orientation = mover.orientation
+
+    assert np.allclose(orientation.T @ orientation, np.eye(3), atol=1e-7)
+    assert np.isclose(np.linalg.det(orientation), 1.0, atol=1e-7)
+
+
+def test_fixed_wing_aero_force_is_zero_at_low_speed():
+    pos = lla_to_ecef(0.0, 0.0, 2000.0)
+    vel = np.array([1.0e-8, 0.0, 0.0])
+    mover = FixedWingMover(pos, vel, use_coriolis=False)
+
+    assert np.allclose(mover._aerodynamic_force(pos, vel, mover.orientation), np.zeros(3))
+
+
+def test_fixed_wing_restoring_moment_is_zero_at_low_speed():
+    pos = lla_to_ecef(0.0, 0.0, 2000.0)
+    vel = np.array([1.0e-8, 0.0, 0.0])
+    mover = FixedWingMover(pos, vel, use_coriolis=False)
+
+    assert np.allclose(
+        mover._restoring_moment_components(pos, vel, mover.orientation, np.array([1.0, -1.0, 0.5])),
+        np.zeros(3),
+    )
+
+
+def test_fixed_wing_aero_force_is_pure_drag_when_aligned():
+    pos = lla_to_ecef(0.0, 0.0, 2000.0)
+    vel = np.array([0.0, 180.0, 0.0])
+    mover = FixedWingMover(pos, vel, use_coriolis=False)
+
+    aero_force = mover._aerodynamic_force(pos, vel, mover.orientation)
+    body_force = mover.orientation.T @ aero_force
+
+    assert body_force[0] < 0.0
+    assert np.isclose(body_force[1], 0.0, atol=1e-9)
+    assert np.isclose(body_force[2], 0.0, atol=1e-9)
+
+
+def test_fixed_wing_restoring_moment_is_zero_when_aligned_and_rates_zero():
+    pos = lla_to_ecef(0.0, 0.0, 2000.0)
+    vel = np.array([0.0, 180.0, 0.0])
+    mover = FixedWingMover(pos, vel, use_coriolis=False)
+
+    assert np.allclose(
+        mover._restoring_moment_components(pos, vel, mover.orientation, np.zeros(3)),
+        np.zeros(3),
+        atol=1e-9,
+    )
+
+
+def test_fixed_wing_drag_increases_with_alpha_and_beta():
+    pos = lla_to_ecef(0.0, 0.0, 2000.0)
+    vel = np.array([0.0, 180.0, 0.0])
+    mover = FixedWingMover(pos, vel, use_coriolis=False)
+
+    aligned_body_force = mover.orientation.T @ mover._aerodynamic_force(pos, vel, mover.orientation)
+
+    pitched_orientation = mover.orientation @ _rotation_about_body_right(np.radians(10.0))
+    pitched_body_force = pitched_orientation.T @ mover._aerodynamic_force(pos, vel, pitched_orientation)
+
+    yawed_orientation = mover.orientation @ _rotation_about_body_up(np.radians(-10.0))
+    yawed_body_force = yawed_orientation.T @ mover._aerodynamic_force(pos, vel, yawed_orientation)
+
+    assert abs(pitched_body_force[0]) > abs(aligned_body_force[0])
+    assert abs(yawed_body_force[0]) > abs(aligned_body_force[0])
+
+
+def test_fixed_wing_bank_error_fallback_near_vertical_flight():
+    pos = lla_to_ecef(0.0, 0.0, 2000.0)
+    local_up = pos / np.linalg.norm(pos)
+    vel = 180.0 * local_up
+    mover = FixedWingMover(pos, vel, use_coriolis=False)
+
+    banked_orientation = mover.orientation @ _rotation_about_body_forward(np.radians(20.0))
+    speed, alpha, beta, bank_error = mover._aerodynamic_angles(pos, vel, banked_orientation)
+    restoring = mover._restoring_moment_components(pos, vel, banked_orientation, np.zeros(3))
+
+    assert speed > 0.0
+    assert np.isfinite(alpha)
+    assert np.isfinite(beta)
+    assert np.isfinite(bank_error)
+    assert np.isclose(bank_error, 0.0, atol=1e-9)
+    assert np.isclose(restoring[0], 0.0, atol=1e-9)
+
+
+def test_fixed_wing_rate_damping_opposes_each_axis_independently():
+    pos = lla_to_ecef(0.0, 0.0, 2000.0)
+    vel = np.array([0.0, 180.0, 0.0])
+    mover = FixedWingMover(pos, vel, use_coriolis=False)
+
+    roll_only = mover._restoring_moment_components(pos, vel, mover.orientation, np.array([0.2, 0.0, 0.0]))
+    pitch_only = mover._restoring_moment_components(pos, vel, mover.orientation, np.array([0.0, 0.3, 0.0]))
+    yaw_only = mover._restoring_moment_components(pos, vel, mover.orientation, np.array([0.0, 0.0, 0.4]))
+
+    assert roll_only[0] < 0.0
+    assert np.isclose(roll_only[1], 0.0, atol=1e-9)
+    assert np.isclose(roll_only[2], 0.0, atol=1e-9)
+
+    assert pitch_only[1] > 0.0
+    assert np.isclose(pitch_only[0], 0.0, atol=1e-9)
+    assert np.isclose(pitch_only[2], 0.0, atol=1e-9)
+
+    assert yaw_only[2] < 0.0
+    assert np.isclose(yaw_only[0], 0.0, atol=1e-9)
+    assert np.isclose(yaw_only[1], 0.0, atol=1e-9)
+
+
+def test_fixed_wing_roll_rate_decays_with_damping_only():
+    engine = SimulationEngine()
+    engine.max_step = 0.01
+
+    pos = lla_to_ecef(0.0, 0.0, 2000.0)
+    vel = np.array([0.0, 180.0, 0.0])
+    mover = FixedWingMover(
+        pos,
+        vel,
+        initial_body_rates=np.array([0.3, 0.0, 0.0]),
+        bank_restoring_coeff=0.0,
+        alpha_restoring_coeff=0.0,
+        beta_restoring_coeff=0.0,
+        roll_damping_coeff=3.0e4,
+        pitch_damping_coeff=0.0,
+        yaw_damping_coeff=0.0,
+        use_coriolis=False,
+    )
+    initial_roll_rate = mover.get_state()[mover.get_omega_slice()][0]
+
+    engine.register_platform(Platform("fixed_wing_damping", mover))
+    engine.run(0.25)
+
+    final_roll_rate = mover.get_state()[mover.get_omega_slice()][0]
+    assert abs(final_roll_rate) < abs(initial_roll_rate)
+
+
+def test_fixed_wing_bank_relaxes_toward_level():
+    engine = SimulationEngine()
+    engine.max_step = 0.01
+
+    pos = lla_to_ecef(0.0, 0.0, 2000.0)
+    vel = np.array([0.0, 180.0, 0.0])
+    base_mover = FixedWingMover(pos, vel, use_coriolis=False)
+    banked_orientation = base_mover.orientation @ _rotation_about_body_forward(np.radians(12.0))
+    mover = FixedWingMover(
+        pos,
+        vel,
+        initial_orientation=banked_orientation,
+        bank_restoring_coeff=2.0e5,
+        alpha_restoring_coeff=0.0,
+        beta_restoring_coeff=0.0,
+        roll_damping_coeff=2.0e4,
+        pitch_damping_coeff=0.0,
+        yaw_damping_coeff=0.0,
+        use_coriolis=False,
+    )
+
+    initial_bank_error = mover._aerodynamic_angles(pos, vel, mover.orientation)[3]
+    engine.register_platform(Platform("fixed_wing_bank", mover))
+    engine.run(2.0)
+    final_bank_error = mover._aerodynamic_angles(mover.position, mover.velocity, mover.orientation)[3]
+
+    assert abs(final_bank_error) < abs(initial_bank_error)
+
+
+def test_fixed_wing_alpha_relaxes_toward_zero():
+    engine = SimulationEngine()
+    engine.max_step = 0.01
+
+    pos = lla_to_ecef(0.0, 0.0, 2000.0)
+    vel = np.array([0.0, 220.0, 0.0])
+    base_mover = FixedWingMover(pos, vel, use_coriolis=False)
+    pitched_orientation = base_mover.orientation @ _rotation_about_body_right(np.radians(10.0))
+    mover = FixedWingMover(
+        pos,
+        vel,
+        initial_orientation=pitched_orientation,
+        bank_restoring_coeff=0.0,
+        alpha_restoring_coeff=5.0e4,
+        beta_restoring_coeff=0.0,
+        roll_damping_coeff=0.0,
+        pitch_damping_coeff=2.0e4,
+        yaw_damping_coeff=0.0,
+        use_coriolis=False,
+    )
+
+    initial_alpha = mover._aerodynamic_angles(pos, vel, mover.orientation)[1]
+    engine.register_platform(Platform("fixed_wing_alpha", mover))
+    engine.run(0.5)
+    final_alpha = mover._aerodynamic_angles(mover.position, mover.velocity, mover.orientation)[1]
+
+    assert abs(final_alpha) < abs(initial_alpha)
+
+
+def test_fixed_wing_orientation_correction_event_projects_committed_state():
+    engine = SimulationEngine()
+
+    pos = lla_to_ecef(0.0, 0.0, 2000.0)
+    vel = np.array([0.0, 180.0, 0.0])
+    mover = FixedWingMover(pos, vel, use_coriolis=False)
+    platform = Platform("fixed_wing_event", mover)
+    engine.register_platform(platform)
+
+    mover_slice = engine.context.get_state_slice(mover)
+    orientation_slice = mover.get_orientation_slice()
+    start = mover_slice.start + orientation_slice.start
+    stop = mover_slice.start + orientation_slice.stop
+
+    engine.context.committed_y[start:stop] = np.array([
+        1.0, 0.05, 0.0,
+        0.0, 0.98, -0.08,
+        0.03, 0.02, 1.02,
+    ])
+
+    event = mover.add_orientation_correction_event(engine)
+    event.fix_orientation(engine)
+
+    corrected = engine.context.committed_y[start:stop].reshape((3, 3))
+    assert np.allclose(corrected.T @ corrected, np.eye(3), atol=1e-7)
+    assert np.isclose(np.linalg.det(corrected), 1.0, atol=1e-7)
+
+
 def test_fixed_wing_aerodynamic_force_generates_lift_for_positive_alpha():
     pos = lla_to_ecef(0.0, 0.0, 2000.0)
     vel = np.array([0.0, 180.0, 0.0])
