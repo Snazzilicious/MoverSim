@@ -1099,6 +1099,7 @@ class RocketMover(TranslationalMover, IntegratedMover):
         area=30.0,
         cd0=0.02,
         normal_force_coefficient=2.5,
+        alignment_restoring_coefficient=0.0,
         max_thrust=80000.0,
         max_steering_moment=5.0e4,
         angular_damping=None,
@@ -1121,6 +1122,8 @@ class RocketMover(TranslationalMover, IntegratedMover):
             cd0: Zero-lift drag coefficient.
             normal_force_coefficient: Coefficient mapping axial-flow misalignment into
                 a transverse aerodynamic force.
+            alignment_restoring_coefficient: Coefficient scaling a passive aerodynamic
+                moment that rotates the rocket longitudinal axis toward the airflow.
             max_thrust: Maximum thrust in Newtons.
             max_steering_moment: Maximum steering moment magnitude in N*m.
             angular_damping: Per-axis angular damping coefficients.
@@ -1186,6 +1189,10 @@ class RocketMover(TranslationalMover, IntegratedMover):
             normal_force_coefficient,
             "normal_force_coefficient",
         )
+        self.base_alignment_restoring_coefficient = self._validate_nonnegative_scalar(
+            alignment_restoring_coefficient,
+            "alignment_restoring_coefficient",
+        )
         self.base_max_thrust = float(max_thrust)
         self.base_max_steering_moment = float(max_steering_moment)
 
@@ -1200,6 +1207,7 @@ class RocketMover(TranslationalMover, IntegratedMover):
         self.area = self.base_area
         self.cd0 = self.base_cd0
         self.normal_force_coefficient = self.base_normal_force_coefficient
+        self.alignment_restoring_coefficient = self.base_alignment_restoring_coefficient
         self.max_thrust = self.base_max_thrust
         self.max_steering_moment = self.base_max_steering_moment
         self.angular_damping = self.base_angular_damping.copy()
@@ -1320,6 +1328,11 @@ class RocketMover(TranslationalMover, IntegratedMover):
                     validated_stage["normal_force_coefficient"],
                     f"stages[{index}].normal_force_coefficient",
                 )
+            if "alignment_restoring_coefficient" in validated_stage:
+                validated_stage["alignment_restoring_coefficient"] = self._validate_nonnegative_scalar(
+                    validated_stage["alignment_restoring_coefficient"],
+                    f"stages[{index}].alignment_restoring_coefficient",
+                )
             validated_stage["rotational_mass"] = self._coerce_rotational_mass(
                 validated_stage["rotational_mass"],
             )
@@ -1395,6 +1408,7 @@ class RocketMover(TranslationalMover, IntegratedMover):
             self.area = self.base_area
             self.cd0 = self.base_cd0
             self.normal_force_coefficient = self.base_normal_force_coefficient
+            self.alignment_restoring_coefficient = self.base_alignment_restoring_coefficient
             self.max_thrust = self.base_max_thrust
             self.max_steering_moment = self.base_max_steering_moment
         else:
@@ -1404,6 +1418,9 @@ class RocketMover(TranslationalMover, IntegratedMover):
             self.cd0 = float(stage["drag_coefficient"])
             self.normal_force_coefficient = float(
                 stage.get("normal_force_coefficient", self.base_normal_force_coefficient)
+            )
+            self.alignment_restoring_coefficient = float(
+                stage.get("alignment_restoring_coefficient", self.base_alignment_restoring_coefficient)
             )
             self.max_thrust = float(stage["max_thrust"])
             self.max_steering_moment = float(stage["max_steering_moment"])
@@ -1644,21 +1661,47 @@ class RocketMover(TranslationalMover, IntegratedMover):
         steering_magnitude = (self.steer_cmd / 100.0) * self.max_steering_moment
         return steering_magnitude * steering_direction
 
+    def _alignment_restoring_moment_body(self, pos, vel, orientation):
+        if self.alignment_restoring_coefficient <= 0.0 or self.area <= 0.0:
+            return np.zeros(3)
+
+        speed, _, _, dynamic_pressure = self._air_data(pos, vel)
+        if speed < 1e-6:
+            return np.zeros(3)
+
+        velocity_body = orientation.T @ vel
+        velocity_hat_body = velocity_body / speed
+        body_forward_axis = np.array([1.0, 0.0, 0.0])
+        alignment_axis = np.cross(body_forward_axis, velocity_hat_body)
+        alignment_axis[0] = 0.0
+        alignment_axis_norm = np.linalg.norm(alignment_axis)
+        if alignment_axis_norm < 1e-6:
+            return np.zeros(3)
+
+        restoring_magnitude = (
+            dynamic_pressure * self.area * self.alignment_restoring_coefficient * alignment_axis_norm
+        )
+        return restoring_magnitude * (alignment_axis / alignment_axis_norm)
+
     def _angular_damping_moment_body(self, omega_body):
         omega_body = np.asarray(omega_body, dtype=float)
         if omega_body.shape != (3,):
             raise ValueError("omega_body must have shape (3,)")
         return -self.angular_damping * omega_body
 
-    def _body_moment_body(self, omega_body):
-        return self._steering_moment_body() + self._angular_damping_moment_body(omega_body)
+    def _body_moment_body(self, pos, vel, orientation, omega_body):
+        return (
+            self._steering_moment_body()
+            + self._alignment_restoring_moment_body(pos, vel, orientation)
+            + self._angular_damping_moment_body(omega_body)
+        )
 
-    def _angular_acceleration_body(self, omega_body):
+    def _angular_acceleration_body(self, pos, vel, orientation, omega_body):
         omega_body = np.asarray(omega_body, dtype=float)
         if omega_body.shape != (3,):
             raise ValueError("omega_body must have shape (3,)")
 
-        body_moment = self._body_moment_body(omega_body)
+        body_moment = self._body_moment_body(pos, vel, orientation, omega_body)
         angular_momentum = self.rotational_mass @ omega_body
         return self.inv_rotational_mass @ (body_moment - np.cross(omega_body, angular_momentum))
 
@@ -1690,9 +1733,14 @@ class RocketMover(TranslationalMover, IntegratedMover):
     def compute_state_derivative(self, t, state):
         pos = state[self.get_position_slice()]
         vel = state[self.get_velocity_slice()]
-        orientation = state[self.get_orientation_slice()].reshape((3,3))
+        orientation = state[self.get_orientation_slice()].reshape((3, 3))
         orientation = project_to_rotation_matrix(orientation)
         omega_body = state[self.get_omega_slice()]
+        propellant_mass = max(float(state[self.get_propellant_mass_slice()][0]), 0.0)
+        total_mass = max(self.current_total_mass(propellant_mass), 1e-9)
+        thrust_force = self._thrust_force_world(orientation, t, propellant_mass=propellant_mass)
+        drag_force = self._drag_force_world(pos, vel)
+        normal_force = self._normal_aero_force_world(pos, vel, orientation)
 
         dpos = vel
         dorientation = orientation @ vector_to_skew_symmetric(omega_body)
@@ -1705,9 +1753,11 @@ class RocketMover(TranslationalMover, IntegratedMover):
             accel += centrifugal_acceleration(pos)
             accel += coriolis_acceleration(vel)
 
-        dvel = accel
-        domega = self._angular_acceleration_body(omega_body)
-        dpropellant_mass = np.array([0.0])
+        dvel = accel + (thrust_force + drag_force + normal_force) / total_mass
+        domega = self._angular_acceleration_body(pos, vel, orientation, omega_body)
+        dpropellant_mass = np.array([
+            -self.current_mass_flow_rate(t, propellant_mass=propellant_mass),
+        ])
 
         return np.concatenate([dpos, dvel, dorientation.reshape(-1), domega, dpropellant_mass])
 

@@ -4,7 +4,6 @@
 
 * Redesign Aircraft movers
     * Rocket mover
-        * restoring model - have damping, not restoring
     * Rocket guidance
         * Waypoints or whatever
         * Trigger stage separation
