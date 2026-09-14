@@ -4,9 +4,16 @@
 
 * Redesign Aircraft movers
     * Rocket mover
-        * fuel model
+        * mass model
+            * fuel consumption
+            * stage jettison
+        * control variables
+        * restoring model
     * Rocket guidance
+        * Waypoints or whatever
+        * Trigger stage separation
     * Ballistic mover
+        * for expended stages
     * Remove old aircraft mover(s)
         * Aircraft6DOFMover, Aircraft6DOFAutopilot
         * Update AircraftSplineMover to use fru instead of quaternions 
