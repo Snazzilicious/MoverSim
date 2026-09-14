@@ -1398,6 +1398,32 @@ class RocketMover(TranslationalMover, IntegratedMover):
             return None
         return self.stages[self.active_stage_index]
 
+    def _set_propellant_mass_state(self, propellant_mass):
+        propellant_mass = self._validate_nonnegative_scalar(propellant_mass, "propellant_mass")
+        propellant_mass_slice = self.get_propellant_mass_slice()
+        self._initial_state[propellant_mass_slice] = propellant_mass
+
+        if self._context is not None and self in self._context._index_map:
+            state_slice = self._context.get_state_slice(self)
+            committed_state = self._context.committed_y[state_slice].copy()
+            committed_state[propellant_mass_slice] = propellant_mass
+            self._context.committed_y[state_slice] = committed_state
+
+            if self._context._integrating and self._context._integration_y is not None:
+                integration_state = self._context._integration_y[state_slice].copy()
+                integration_state[propellant_mass_slice] = propellant_mass
+                self._context._integration_y[state_slice] = integration_state
+
+        self.mass = self.current_total_mass(propellant_mass)
+
+    def _refresh_stage_configuration(self, propellant_mass):
+        self.attached_mass_excluding_active_propellant = self._compute_attached_mass_excluding_active_propellant(
+            self.active_stage_index,
+        )
+        self._apply_active_stage_properties()
+        self.dry_mass = self.attached_mass_excluding_active_propellant
+        self.mass = self.current_total_mass(propellant_mass)
+
     def _coerce_percent_command(self, value, name):
         value = float(value)
         if not np.isfinite(value):
@@ -1550,6 +1576,31 @@ class RocketMover(TranslationalMover, IntegratedMover):
         if propellant_mass <= 0.0:
             return False
         return self.current_mass_flow_rate(0.0, propellant_mass=propellant_mass) > 0.0
+
+    def can_separate_stage(self, propellant_mass=None):
+        if propellant_mass is None:
+            propellant_mass = self.propellant_mass
+        propellant_mass = self._validate_nonnegative_scalar(propellant_mass, "propellant_mass")
+        if not self.stages:
+            return False
+        if self.active_stage_index + 1 >= len(self.stages):
+            return False
+        return propellant_mass <= 0.0
+
+    def separate_stage(self):
+        current_propellant_mass = self.propellant_mass
+        if not self.can_separate_stage(current_propellant_mass):
+            raise RuntimeError("current stage cannot be separated")
+
+        self.active_stage_index += 1
+        next_stage = self._active_stage()
+        next_propellant_mass = float(next_stage["propellant_mass"])
+        self._refresh_stage_configuration(next_propellant_mass)
+        self._set_propellant_mass_state(next_propellant_mass)
+        return next_stage
+
+    def advance_to_next_stage(self):
+        return self.separate_stage()
 
     def compute_state_derivative(self, t, state):
         pos = state[self.get_position_slice()]
