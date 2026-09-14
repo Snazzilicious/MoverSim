@@ -1047,10 +1047,33 @@ class FixedWingAutopilot(Controller):
 class RocketMover(TranslationalMover, IntegratedMover):
     """Rigid-body rocket mover with translational, attitude, and body-rate state."""
 
-    class OrientationCorrectionEvent :
-        """Periodically forcibly renormalizes orientation value in the engine's context. 
-        """
-        pass
+    class OrientationCorrectionEvent(Event):
+        """Periodically projects a mover's committed orientation back onto `SO(3)`."""
+
+        def __init__(self, mover, interval=1.0):
+            self.mover = mover
+            mover_name = mover.platform.id if mover.platform is not None else str(id(mover))
+            super().__init__(
+                0.0,
+                self.fix_orientation,
+                name=f"RocketOrientationCorrection_{mover_name}",
+                interval=interval,
+            )
+
+        def fix_orientation(self, engine):
+            if self.mover._context is not engine.context:
+                return
+            if self.mover not in engine.context._index_map:
+                return
+
+            mover_slice = engine.context.get_state_slice(self.mover)
+            orientation_slice = self.mover.get_orientation_slice()
+            start = mover_slice.start + orientation_slice.start
+            stop = mover_slice.start + orientation_slice.stop
+
+            orientation = engine.context.committed_y[start:stop].reshape((3, 3))
+            corrected = project_to_rotation_matrix(orientation)
+            engine.context.committed_y[start:stop] = corrected.reshape(-1)
 
     def __init__(
         self,
@@ -1059,10 +1082,12 @@ class RocketMover(TranslationalMover, IntegratedMover):
         initial_orientation=None,
         initial_body_rates=None,
         mass=10000.0,
-        inertia=None,
+        propellant_mass=0.0,
+        rotational_mass=None,
         area=30.0,
         cd0=0.02,
-        t_max=80000.0,
+        max_thrust=80000.0,
+        max_steering_moment=5.0e4,
         angular_damping=None,
         use_coriolis=True,
     ):
@@ -1070,65 +1095,156 @@ class RocketMover(TranslationalMover, IntegratedMover):
         Parameters:
             initial_position: ECEF coordinates [X, Y, Z] in meters.
             initial_velocity: ECEF velocity [Vx, Vy, Vz] in m/s.
-            initial_orientation: Optional forward, vector in ECEF. If omitted,
+            initial_orientation: Optional mover-frame forward, right, up basis matrix in ECEF. If omitted,
                 an orientation is derived from the initial velocity and local vertical.
-            initial_body_rates: Optional time derivative of initial_orientation.
-            mass: Vehicle mass in kg.
-            inertia: Body inertia.
+            initial_body_rates: Optional body angular velocity vector in rad/s.
+            mass: Dry or non-propellant mass carried by the rocket in kg.
+            propellant_mass: Active propellant mass in kg stored in the state vector.
+            rotational_mass: Body rotational-mass tensor as a `(3, 3)` tensor or `(3,)` principal moments.
             area: Reference area in m^2 used for drag.
             cd0: Zero-lift drag coefficient.
-            t_max: Maximum thrust in Newtons.
+            max_thrust: Maximum thrust in Newtons.
+            max_steering_moment: Maximum steering moment magnitude in N*m.
             angular_damping: Per-axis angular damping coefficients.
             use_coriolis: If True, include Coriolis acceleration in world-frame translation.
 
         State layout:
-            [x, y, z, vx, vy, vz, o1, ..., o3, o1', ..., o3']
+            [x, y, z, vx, vy, vz, o11, ..., o33, w1, w2, w3, m_prop]
         """
 
-        self.steer_direction = np.array([1.0,0.0,0.0])
+        initial_position = np.asarray(initial_position, dtype=float)
+        if initial_position.shape != (3,):
+            raise ValueError("initial_position must have shape (3,)")
+
+        initial_velocity = np.asarray(initial_velocity, dtype=float)
+        if initial_velocity.shape != (3,):
+            raise ValueError("initial_velocity must have shape (3,)")
+
+        initial_body_rates = (
+            np.asarray(initial_body_rates, dtype=float)
+            if initial_body_rates is not None
+            else np.zeros(3)
+        )
+        if initial_body_rates.shape != (3,):
+            raise ValueError("initial_body_rates must have shape (3,)")
+
+        if initial_orientation is None:
+            initial_orientation = self._derive_orientation_from_velocity(
+                initial_position,
+                initial_velocity,
+            )
+        else:
+            initial_orientation = np.asarray(initial_orientation, dtype=float)
+            if initial_orientation.shape != (3, 3):
+                raise ValueError("initial_orientation must have shape (3, 3)")
+            initial_orientation = project_to_rotation_matrix(initial_orientation)
+
+        initial_propellant_mass = float(propellant_mass)
+        if initial_propellant_mass < 0.0:
+            raise ValueError("propellant_mass must be non-negative")
+
+        state = np.concatenate([
+            initial_position,
+            initial_velocity,
+            initial_orientation.reshape(-1),
+            initial_body_rates,
+            np.array([initial_propellant_mass]),
+        ])
+        super().__init__(state)
+
+        self.dry_mass = float(mass)
+        self.mass = self.dry_mass + initial_propellant_mass
+        self.rotational_mass = self._coerce_rotational_mass(rotational_mass)
+        self.inv_rotational_mass = np.linalg.inv(self.rotational_mass)
+        self.area = float(area)
+        self.cd0 = float(cd0)
+        self.max_thrust = float(max_thrust)
+        self.max_steering_moment = float(max_steering_moment)
+        self.angular_damping = self._coerce_angular_damping(angular_damping)
+        self.use_coriolis = bool(use_coriolis)
+
+        self.thrust_cmd = 0.0
         self.steer_cmd = 0.0
-    
-    def _thrust_vector( self, forward ):
-        return ( self.thrust_cmd / 100.0 ) * self.max_thrust * forward
-    
-    def _body_torque( self, forward ):
-        # make sure commanded direction is orthogonal to forward
-        direction = self.steer_direction - ( forward.dot(self.steer_direction) ) * forward
-        direction = _normalize_vector( direction )
+        self.steer_direction_body = np.array([0.0, 1.0, 0.0])
 
+    def add_orientation_correction_event(self, engine, interval=1.0):
+        """Schedule a recurring event that projects the committed orientation onto `SO(3)`."""
+        event = self.OrientationCorrectionEvent(self, interval=interval)
+        engine.schedule(engine.t, event.callback, name=event.name, interval=event.interval)
+        return event
 
+    def _derive_orientation_from_velocity(self, position, velocity):
+        speed = np.linalg.norm(velocity)
+        if speed < 1e-8:
+            return np.eye(3)
 
-        return ( self.steer_cmd / 100.0 ) * direction
+        pos_norm = np.linalg.norm(position)
+        local_vertical = position / pos_norm if pos_norm > 1e-8 else np.array([0.0, 0.0, 1.0])
+        forward, right, up = build_aircraft_body_axes(velocity, local_vertical)
+        return project_to_rotation_matrix(np.column_stack([forward, right, up]))
 
+    def _coerce_rotational_mass(self, rotational_mass):
+        if rotational_mass is None:
+            rotational_mass = np.diag([6.0e4, 1.2e5, 1.2e5])
+        rotational_mass = np.asarray(rotational_mass, dtype=float)
+        if rotational_mass.shape == (3,):
+            rotational_mass = np.diag(rotational_mass)
+        if rotational_mass.shape != (3, 3):
+            raise ValueError("rotational_mass must have shape (3,) or (3, 3)")
+        return rotational_mass
 
-    
+    def _coerce_angular_damping(self, angular_damping):
+        if angular_damping is None:
+            return np.array([2.0e4, 4.0e4, 4.0e4])
+        angular_damping = np.asarray(angular_damping, dtype=float)
+        if angular_damping.shape != (3,):
+            raise ValueError("angular_damping must have shape (3,)")
+        return angular_damping
+
+    def get_orientation_slice(self):
+        return slice(6, 15)
+
+    @property
+    def orientation(self):
+        return self.get_state()[self.get_orientation_slice()].reshape((3, 3))
+
+    def get_omega_slice(self):
+        return slice(15, 18)
+
+    @property
+    def omega_body(self):
+        return self.get_state()[self.get_omega_slice()]
+
+    def get_propellant_mass_slice(self):
+        return slice(18, 19)
+
+    @property
+    def propellant_mass(self):
+        return float(self.get_state()[self.get_propellant_mass_slice()][0])
 
     def compute_state_derivative(self, t, state):
-        # unpack current state
         pos = state[self.get_position_slice()]
         vel = state[self.get_velocity_slice()]
         orientation = state[self.get_orientation_slice()].reshape((3,3))
-        orientation = _normalize_vector( orientation )
-        body_rates = state[self.get_body_rate_slice()]
+        orientation = project_to_rotation_matrix(orientation)
+        omega_body = state[self.get_omega_slice()]
 
-        forward = orientation
-
-        # trivial derivatives
         dpos = vel
-        dorientation = body_rates
-
-        # Body acceleration
-        body_force = self._thrust_vector( forward )
-        body_force += self._lift_vector( up, ... )
-        body_force += self._drag_force( ... )
+        dorientation = orientation @ vector_to_skew_symmetric(omega_body)
+        if self.use_coriolis:
+            frame_rotation = vector_to_skew_symmetric(coriolis_vector())
+            dorientation -= frame_rotation
 
         accel = gravity(pos)
-        accel += centrifugal_acceleration(...)
-        accel += coriolis_acceleration(...)
+        if self.use_coriolis:
+            accel += centrifugal_acceleration(pos)
+            accel += coriolis_acceleration(vel)
 
-        dvel = accel + body_force / self.mass.reshape((3,3))
+        dvel = accel
+        domega = -self.inv_rotational_mass @ (self.angular_damping * omega_body)
+        dpropellant_mass = np.array([0.0])
 
-        return np.concatenate([dpos, dvel, dorientation, dbody_rates])
+        return np.concatenate([dpos, dvel, dorientation.reshape(-1), domega, dpropellant_mass])
 
 
         
