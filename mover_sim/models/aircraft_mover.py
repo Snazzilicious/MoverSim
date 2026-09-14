@@ -1620,7 +1620,7 @@ class RocketMover(TranslationalMover, IntegratedMover):
         propellant_mass = self._validate_nonnegative_scalar(propellant_mass, "propellant_mass")
         if propellant_mass <= 0.0:
             return False
-        return self.current_mass_flow_rate(0.0, propellant_mass=propellant_mass) > 0.0
+        return bool(self.current_mass_flow_rate(0.0, propellant_mass=propellant_mass) > 0.0)
 
     def _air_data(self, pos, vel):
         speed = np.linalg.norm(vel)

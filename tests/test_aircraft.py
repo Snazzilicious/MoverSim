@@ -12,6 +12,7 @@ from mover_sim.models.aircraft_mover import (
     AircraftAutopilot,
     FixedWingAutopilot,
     FixedWingMover,
+    RocketMover,
 )
 from mover_sim.math.coordinates import lla_to_ecef, ecef_to_enu, ecef_to_lla
 from mover_sim.math.orientation import rotate_vector_by_quaternion
@@ -1155,3 +1156,267 @@ def test_fixed_wing_restoring_moment_opposes_alpha_beta_and_rates():
     assert damping[0] < 0.0
     assert damping[1] < 0.0
     assert damping[2] < 0.0
+
+
+def test_rocket_mover_constructor_stores_expected_state_layout():
+    pos = lla_to_ecef(0.0, 0.0, 1500.0)
+    vel = np.array([0.0, 220.0, 15.0])
+    stages = [
+        {
+            "dry_mass": 1200.0,
+            "propellant_mass": 800.0,
+            "reference_area": 1.8,
+            "drag_coefficient": 0.14,
+            "rotational_mass": np.diag([2500.0, 8000.0, 8000.0]),
+            "angular_damping": np.array([4000.0, 7000.0, 7000.0]),
+            "max_thrust": 160000.0,
+            "max_steering_moment": 18000.0,
+            "mass_flow_rate": 20.0,
+            "thrust": 150000.0,
+        }
+    ]
+
+    mover = RocketMover(
+        pos,
+        vel,
+        stages=stages,
+        mass=300.0,
+        area=2.2,
+        cd0=0.1,
+        use_coriolis=False,
+    )
+
+    assert mover.get_state_dimension() == 19
+    assert mover.get_state().shape == (19,)
+    assert mover.orientation.shape == (3, 3)
+    assert mover.omega_body.shape == (3,)
+    assert np.isclose(mover.propellant_mass, 800.0)
+    assert mover.get_propellant_mass_slice() == slice(18, 19)
+    assert mover.active_stage_index == 0
+    assert np.isclose(mover.max_thrust, 160000.0)
+    assert np.isclose(mover.max_steering_moment, 18000.0)
+    assert np.isclose(mover.area, 1.8)
+    assert np.isclose(mover.cd0, 0.14)
+    assert np.isclose(mover.current_total_mass(), 2300.0)
+
+
+def test_rocket_orientation_correction_event_projects_committed_state():
+    engine = SimulationEngine()
+
+    pos = lla_to_ecef(0.0, 0.0, 2000.0)
+    vel = np.array([0.0, 250.0, 0.0])
+    mover = RocketMover(pos, vel, use_coriolis=False)
+    platform = Platform("rocket_event", mover)
+    engine.register_platform(platform)
+
+    mover_slice = engine.context.get_state_slice(mover)
+    orientation_slice = mover.get_orientation_slice()
+    start = mover_slice.start + orientation_slice.start
+    stop = mover_slice.start + orientation_slice.stop
+
+    engine.context.committed_y[start:stop] = np.array([
+        1.0, 0.08, 0.0,
+        -0.02, 0.97, -0.06,
+        0.04, 0.03, 1.03,
+    ])
+
+    event = mover.add_orientation_correction_event(engine)
+    event.fix_orientation(engine)
+
+    corrected = engine.context.committed_y[start:stop].reshape((3, 3))
+    assert np.allclose(corrected.T @ corrected, np.eye(3), atol=1e-7)
+    assert np.isclose(np.linalg.det(corrected), 1.0, atol=1e-7)
+
+
+def test_rocket_propellant_mass_decreases_during_burn():
+    engine = SimulationEngine()
+    engine.max_step = 0.02
+
+    pos = lla_to_ecef(0.0, 0.0, 1500.0)
+    vel = np.array([0.0, 180.0, 0.0])
+    mover = RocketMover(
+        pos,
+        vel,
+        stages=[
+            {
+                "dry_mass": 800.0,
+                "propellant_mass": 50.0,
+                "reference_area": 1.0,
+                "drag_coefficient": 0.0,
+                "rotational_mass": np.diag([1500.0, 4000.0, 4000.0]),
+                "angular_damping": np.array([1000.0, 2000.0, 2000.0]),
+                "max_thrust": 50000.0,
+                "max_steering_moment": 5000.0,
+                "mass_flow_rate": 20.0,
+                "thrust": 50000.0,
+            }
+        ],
+        mass=200.0,
+        normal_force_coefficient=0.0,
+        use_coriolis=False,
+    )
+    mover.thrust_cmd = 100.0
+
+    engine.register_platform(Platform("rocket_burn", mover))
+    engine.run(1.5)
+
+    assert np.isclose(mover.propellant_mass, 20.0, atol=1e-2)
+    assert np.isclose(mover.current_total_mass(), 1020.0, atol=1e-2)
+
+
+def test_rocket_forward_acceleration_increases_as_mass_drops_under_fixed_thrust():
+    pos = lla_to_ecef(0.0, 0.0, 1500.0)
+    mover = RocketMover(
+        pos,
+        np.zeros(3),
+        initial_orientation=np.eye(3),
+        stages=[
+            {
+                "dry_mass": 400.0,
+                "propellant_mass": 100.0,
+                "reference_area": 1.0,
+                "drag_coefficient": 0.0,
+                "rotational_mass": np.diag([1200.0, 3000.0, 3000.0]),
+                "angular_damping": np.array([500.0, 1000.0, 1000.0]),
+                "max_thrust": 12000.0,
+                "max_steering_moment": 2000.0,
+                "mass_flow_rate": 10.0,
+                "thrust": 12000.0,
+            }
+        ],
+        mass=100.0,
+        normal_force_coefficient=0.0,
+        use_coriolis=False,
+    )
+    mover.thrust_cmd = 100.0
+
+    heavy_state = mover.get_initial_state().copy()
+    light_state = mover.get_initial_state().copy()
+    heavy_state[mover.get_propellant_mass_slice()] = 100.0
+    light_state[mover.get_propellant_mass_slice()] = 20.0
+
+    heavy_dvel = mover.compute_state_derivative(0.0, heavy_state)[mover.get_velocity_slice()]
+    light_dvel = mover.compute_state_derivative(0.0, light_state)[mover.get_velocity_slice()]
+
+    assert light_dvel[0] > heavy_dvel[0]
+
+
+def test_rocket_stage_thrust_and_mass_flow_drop_to_zero_at_burnout():
+    pos = lla_to_ecef(0.0, 0.0, 1500.0)
+    vel = np.array([0.0, 180.0, 0.0])
+    mover = RocketMover(
+        pos,
+        vel,
+        stages=[
+            {
+                "dry_mass": 700.0,
+                "propellant_mass": 60.0,
+                "reference_area": 1.2,
+                "drag_coefficient": 0.08,
+                "rotational_mass": np.diag([1400.0, 3500.0, 3500.0]),
+                "angular_damping": np.array([700.0, 1300.0, 1300.0]),
+                "max_thrust": 80000.0,
+                "max_steering_moment": 4000.0,
+                "mass_flow_rate": 12.0,
+                "thrust": 60000.0,
+            }
+        ],
+        mass=150.0,
+        use_coriolis=False,
+    )
+    mover.thrust_cmd = 50.0
+
+    assert np.isclose(mover.current_stage_thrust(0.0, propellant_mass=10.0), 30000.0)
+    assert np.isclose(mover.current_mass_flow_rate(0.0, propellant_mass=10.0), 6.0)
+    assert mover.has_active_burn(propellant_mass=10.0) is True
+
+    assert mover.current_stage_thrust(0.0, propellant_mass=0.0) == 0.0
+    assert mover.current_mass_flow_rate(0.0, propellant_mass=0.0) == 0.0
+    assert mover.has_active_burn(propellant_mass=0.0) is False
+
+
+def test_rocket_stage_separation_updates_stage_properties_and_propellant_state():
+    engine = SimulationEngine()
+
+    pos = lla_to_ecef(0.0, 0.0, 1500.0)
+    vel = np.array([0.0, 180.0, 0.0])
+    mover = RocketMover(
+        pos,
+        vel,
+        stages=[
+            {
+                "dry_mass": 700.0,
+                "propellant_mass": 40.0,
+                "reference_area": 1.5,
+                "drag_coefficient": 0.12,
+                "rotational_mass": np.diag([1800.0, 5000.0, 5000.0]),
+                "angular_damping": np.array([900.0, 1600.0, 1600.0]),
+                "max_thrust": 90000.0,
+                "max_steering_moment": 7000.0,
+                "mass_flow_rate": 10.0,
+                "thrust": 85000.0,
+            },
+            {
+                "dry_mass": 300.0,
+                "propellant_mass": 20.0,
+                "reference_area": 0.9,
+                "drag_coefficient": 0.2,
+                "rotational_mass": np.diag([900.0, 2200.0, 2200.0]),
+                "angular_damping": np.array([400.0, 700.0, 700.0]),
+                "max_thrust": 30000.0,
+                "max_steering_moment": 2500.0,
+                "mass_flow_rate": 5.0,
+                "thrust": 28000.0,
+            },
+        ],
+        mass=100.0,
+        use_coriolis=False,
+    )
+    engine.register_platform(Platform("rocket_stage_sep", mover))
+
+    mover._set_propellant_mass_state_in_engine(0.0, engine)
+    assert mover.can_separate_stage() is True
+
+    next_stage = mover.separate_stage(engine)
+
+    mover_slice = engine.context.get_state_slice(mover)
+    propellant_state = engine.context.committed_y[mover_slice][mover.get_propellant_mass_slice()][0]
+
+    assert next_stage is mover.stages[1]
+    assert mover.active_stage_index == 1
+    assert np.isclose(mover.propellant_mass, 20.0)
+    assert np.isclose(propellant_state, 20.0)
+    assert np.isclose(mover.area, 0.9)
+    assert np.isclose(mover.cd0, 0.2)
+    assert np.isclose(mover.max_thrust, 30000.0)
+    assert np.isclose(mover.max_steering_moment, 2500.0)
+    assert np.allclose(mover.angular_damping, [400.0, 700.0, 700.0])
+    assert np.allclose(mover.rotational_mass, np.diag([900.0, 2200.0, 2200.0]))
+    assert np.isclose(mover.current_total_mass(), 420.0)
+    assert mover.can_separate_stage() is False
+
+
+def test_rocket_equal_transverse_steering_commands_have_equal_response_magnitude():
+    pos = lla_to_ecef(0.0, 0.0, 1500.0)
+    mover = RocketMover(
+        pos,
+        np.zeros(3),
+        initial_orientation=np.eye(3),
+        rotational_mass=np.diag([1200.0, 3600.0, 3600.0]),
+        angular_damping=np.array([0.0, 0.0, 0.0]),
+        normal_force_coefficient=0.0,
+        alignment_restoring_coefficient=0.0,
+        use_coriolis=False,
+    )
+    mover.steer_cmd = 60.0
+
+    mover.steer_direction_body = np.array([0.0, 1.0, 0.0])
+    y_response = mover._angular_acceleration_body(pos, np.zeros(3), np.eye(3), np.zeros(3))
+
+    mover.steer_direction_body = np.array([0.0, 0.0, 1.0])
+    z_response = mover._angular_acceleration_body(pos, np.zeros(3), np.eye(3), np.zeros(3))
+
+    assert np.isclose(y_response[0], 0.0, atol=1e-12)
+    assert np.isclose(z_response[0], 0.0, atol=1e-12)
+    assert np.isclose(np.linalg.norm(y_response), np.linalg.norm(z_response), atol=1e-12)
+    assert np.isclose(abs(y_response[1]), abs(z_response[2]), atol=1e-12)
