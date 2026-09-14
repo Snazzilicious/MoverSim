@@ -4,11 +4,7 @@
 
 * Redesign Aircraft movers
     * Rocket mover
-        * mass model
-            * fuel consumption
-            * stage jettison
-        * control variables
-        * restoring model
+        * restoring model - have damping, not restoring
     * Rocket guidance
         * Waypoints or whatever
         * Trigger stage separation

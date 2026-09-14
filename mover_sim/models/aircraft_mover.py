@@ -1638,6 +1638,30 @@ class RocketMover(TranslationalMover, IntegratedMover):
         force_magnitude = dynamic_pressure * self.area * self.normal_force_coefficient * misalignment
         return force_magnitude * force_direction
 
+    def _steering_moment_body(self):
+        body_forward_axis = np.array([1.0, 0.0, 0.0])
+        steering_direction = self.steering_direction_perpendicular_to(body_forward_axis)
+        steering_magnitude = (self.steer_cmd / 100.0) * self.max_steering_moment
+        return steering_magnitude * steering_direction
+
+    def _angular_damping_moment_body(self, omega_body):
+        omega_body = np.asarray(omega_body, dtype=float)
+        if omega_body.shape != (3,):
+            raise ValueError("omega_body must have shape (3,)")
+        return -self.angular_damping * omega_body
+
+    def _body_moment_body(self, omega_body):
+        return self._steering_moment_body() + self._angular_damping_moment_body(omega_body)
+
+    def _angular_acceleration_body(self, omega_body):
+        omega_body = np.asarray(omega_body, dtype=float)
+        if omega_body.shape != (3,):
+            raise ValueError("omega_body must have shape (3,)")
+
+        body_moment = self._body_moment_body(omega_body)
+        angular_momentum = self.rotational_mass @ omega_body
+        return self.inv_rotational_mass @ (body_moment - np.cross(omega_body, angular_momentum))
+
     def can_separate_stage(self, propellant_mass=None):
         if propellant_mass is None:
             propellant_mass = self.propellant_mass
@@ -1682,7 +1706,7 @@ class RocketMover(TranslationalMover, IntegratedMover):
             accel += coriolis_acceleration(vel)
 
         dvel = accel
-        domega = -self.inv_rotational_mass @ (self.angular_damping * omega_body)
+        domega = self._angular_acceleration_body(omega_body)
         dpropellant_mass = np.array([0.0])
 
         return np.concatenate([dpos, dvel, dorientation.reshape(-1), domega, dpropellant_mass])
