@@ -1098,6 +1098,7 @@ class RocketMover(TranslationalMover, IntegratedMover):
         rotational_mass=None,
         area=30.0,
         cd0=0.02,
+        normal_force_coefficient=2.5,
         max_thrust=80000.0,
         max_steering_moment=5.0e4,
         angular_damping=None,
@@ -1118,6 +1119,8 @@ class RocketMover(TranslationalMover, IntegratedMover):
             rotational_mass: Body rotational-mass tensor as a `(3, 3)` tensor or `(3,)` principal moments.
             area: Reference area in m^2 used for drag.
             cd0: Zero-lift drag coefficient.
+            normal_force_coefficient: Coefficient mapping axial-flow misalignment into
+                a transverse aerodynamic force.
             max_thrust: Maximum thrust in Newtons.
             max_steering_moment: Maximum steering moment magnitude in N*m.
             angular_damping: Per-axis angular damping coefficients.
@@ -1179,6 +1182,10 @@ class RocketMover(TranslationalMover, IntegratedMover):
         self.base_angular_damping = self._coerce_angular_damping(angular_damping)
         self.base_area = float(area)
         self.base_cd0 = float(cd0)
+        self.base_normal_force_coefficient = self._validate_nonnegative_scalar(
+            normal_force_coefficient,
+            "normal_force_coefficient",
+        )
         self.base_max_thrust = float(max_thrust)
         self.base_max_steering_moment = float(max_steering_moment)
 
@@ -1192,6 +1199,7 @@ class RocketMover(TranslationalMover, IntegratedMover):
         self.inv_rotational_mass = np.linalg.inv(self.rotational_mass)
         self.area = self.base_area
         self.cd0 = self.base_cd0
+        self.normal_force_coefficient = self.base_normal_force_coefficient
         self.max_thrust = self.base_max_thrust
         self.max_steering_moment = self.base_max_steering_moment
         self.angular_damping = self.base_angular_damping.copy()
@@ -1307,6 +1315,11 @@ class RocketMover(TranslationalMover, IntegratedMover):
                 validated_stage["drag_coefficient"],
                 f"stages[{index}].drag_coefficient",
             )
+            if "normal_force_coefficient" in validated_stage:
+                validated_stage["normal_force_coefficient"] = self._validate_nonnegative_scalar(
+                    validated_stage["normal_force_coefficient"],
+                    f"stages[{index}].normal_force_coefficient",
+                )
             validated_stage["rotational_mass"] = self._coerce_rotational_mass(
                 validated_stage["rotational_mass"],
             )
@@ -1381,6 +1394,7 @@ class RocketMover(TranslationalMover, IntegratedMover):
             self.angular_damping = self.base_angular_damping.copy()
             self.area = self.base_area
             self.cd0 = self.base_cd0
+            self.normal_force_coefficient = self.base_normal_force_coefficient
             self.max_thrust = self.base_max_thrust
             self.max_steering_moment = self.base_max_steering_moment
         else:
@@ -1388,6 +1402,9 @@ class RocketMover(TranslationalMover, IntegratedMover):
             self.angular_damping = stage["angular_damping"].copy()
             self.area = float(stage["reference_area"])
             self.cd0 = float(stage["drag_coefficient"])
+            self.normal_force_coefficient = float(
+                stage.get("normal_force_coefficient", self.base_normal_force_coefficient)
+            )
             self.max_thrust = float(stage["max_thrust"])
             self.max_steering_moment = float(stage["max_steering_moment"])
 
@@ -1587,6 +1604,39 @@ class RocketMover(TranslationalMover, IntegratedMover):
         if propellant_mass <= 0.0:
             return False
         return self.current_mass_flow_rate(0.0, propellant_mass=propellant_mass) > 0.0
+
+    def _air_data(self, pos, vel):
+        speed = np.linalg.norm(vel)
+        _, _, alt = ecef_to_lla(pos[0], pos[1], pos[2])
+        rho = air_density(alt)
+        dynamic_pressure = 0.5 * rho * (speed ** 2)
+        return speed, alt, rho, dynamic_pressure
+
+    def _thrust_force_world(self, orientation, t, propellant_mass=None):
+        forward_axis = orientation[:, 0]
+        thrust_magnitude = self.current_stage_thrust(t, propellant_mass=propellant_mass)
+        return thrust_magnitude * forward_axis
+
+    def _drag_force_world(self, pos, vel):
+        _, alt, _, _ = self._air_data(pos, vel)
+        return aerodynamic_drag_force(vel, alt, self.cd0, self.area)
+
+    def _normal_aero_force_world(self, pos, vel, orientation):
+        speed, _, _, dynamic_pressure = self._air_data(pos, vel)
+        if speed < 1e-6 or self.area <= 0.0 or self.normal_force_coefficient <= 0.0:
+            return np.zeros(3)
+
+        forward_axis = orientation[:, 0]
+        axial_velocity = np.dot(vel, forward_axis) * forward_axis
+        transverse_velocity = vel - axial_velocity
+        transverse_speed = np.linalg.norm(transverse_velocity)
+        if transverse_speed < 1e-6:
+            return np.zeros(3)
+
+        misalignment = transverse_speed / speed
+        force_direction = -transverse_velocity / transverse_speed
+        force_magnitude = dynamic_pressure * self.area * self.normal_force_coefficient * misalignment
+        return force_magnitude * force_direction
 
     def can_separate_stage(self, propellant_mass=None):
         if propellant_mass is None:
