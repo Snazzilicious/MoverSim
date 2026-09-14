@@ -1403,18 +1403,29 @@ class RocketMover(TranslationalMover, IntegratedMover):
         propellant_mass_slice = self.get_propellant_mass_slice()
         self._initial_state[propellant_mass_slice] = propellant_mass
 
-        if self._context is not None and self in self._context._index_map:
-            state_slice = self._context.get_state_slice(self)
-            committed_state = self._context.committed_y[state_slice].copy()
-            committed_state[propellant_mass_slice] = propellant_mass
-            self._context.committed_y[state_slice] = committed_state
-
-            if self._context._integrating and self._context._integration_y is not None:
-                integration_state = self._context._integration_y[state_slice].copy()
-                integration_state[propellant_mass_slice] = propellant_mass
-                self._context._integration_y[state_slice] = integration_state
-
         self.mass = self.current_total_mass(propellant_mass)
+
+    def _set_propellant_mass_state_in_engine(self, propellant_mass, engine):
+        propellant_mass = self._validate_nonnegative_scalar(propellant_mass, "propellant_mass")
+        self._set_propellant_mass_state(propellant_mass)
+
+        if engine is None:
+            raise ValueError("engine is required to rewrite committed propellant-mass state")
+
+        context = engine.context
+        if self not in context._index_map:
+            raise ValueError("rocket mover must be registered with the supplied engine")
+
+        propellant_mass_slice = self.get_propellant_mass_slice()
+        state_slice = context.get_state_slice(self)
+        committed_state = context.committed_y[state_slice].copy()
+        committed_state[propellant_mass_slice] = propellant_mass
+        context.committed_y[state_slice] = committed_state
+
+        if context._integrating and context._integration_y is not None:
+            integration_state = context._integration_y[state_slice].copy()
+            integration_state[propellant_mass_slice] = propellant_mass
+            context._integration_y[state_slice] = integration_state
 
     def _refresh_stage_configuration(self, propellant_mass):
         self.attached_mass_excluding_active_propellant = self._compute_attached_mass_excluding_active_propellant(
@@ -1587,7 +1598,7 @@ class RocketMover(TranslationalMover, IntegratedMover):
             return False
         return propellant_mass <= 0.0
 
-    def separate_stage(self):
+    def separate_stage(self, engine):
         current_propellant_mass = self.propellant_mass
         if not self.can_separate_stage(current_propellant_mass):
             raise RuntimeError("current stage cannot be separated")
@@ -1596,11 +1607,11 @@ class RocketMover(TranslationalMover, IntegratedMover):
         next_stage = self._active_stage()
         next_propellant_mass = float(next_stage["propellant_mass"])
         self._refresh_stage_configuration(next_propellant_mass)
-        self._set_propellant_mass_state(next_propellant_mass)
+        self._set_propellant_mass_state_in_engine(next_propellant_mass, engine)
         return next_stage
 
-    def advance_to_next_stage(self):
-        return self.separate_stage()
+    def advance_to_next_stage(self, engine):
+        return self.separate_stage(engine)
 
     def compute_state_derivative(self, t, state):
         pos = state[self.get_position_slice()]
