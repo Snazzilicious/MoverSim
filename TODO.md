@@ -27,6 +27,10 @@
             * remove body rates
     * Update plotting
     * Update example scenarios
+    * Revisit FixedWingMover
+        * add helpers and properties and setters like RocketMover has
+        * update Autopilot to use them
+        * (make them consistent)
 * Future features (need not be added yet, but ideally not precluded)
     * despawn platform (e.g. if crashes into ground or something)
         * update ballistic missile scenario

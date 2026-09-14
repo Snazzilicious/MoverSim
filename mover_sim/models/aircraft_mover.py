@@ -1201,12 +1201,42 @@ class RocketMover(TranslationalMover, IntegratedMover):
             raise ValueError("angular_damping must have shape (3,)")
         return angular_damping
 
+    def _coerce_percent_command(self, value, name):
+        value = float(value)
+        if not np.isfinite(value):
+            raise ValueError(f"{name} must be finite")
+        return np.clip(value, 0.0, 100.0)
+
+    def _coerce_body_direction(self, direction, name):
+        direction = np.asarray(direction, dtype=float)
+        if direction.shape != (3,):
+            raise ValueError(f"{name} must have shape (3,)")
+        if not np.all(np.isfinite(direction)):
+            raise ValueError(f"{name} must contain only finite values")
+
+        norm = np.linalg.norm(direction)
+        if norm < 1e-12:
+            raise ValueError(f"{name} must have non-zero magnitude")
+        return direction / norm
+
     def get_orientation_slice(self):
         return slice(6, 15)
 
     @property
     def orientation(self):
         return self.get_state()[self.get_orientation_slice()].reshape((3, 3))
+
+    @property
+    def forward_axis(self):
+        return self.orientation[:, 0]
+
+    @property
+    def right_axis(self):
+        return self.orientation[:, 1]
+
+    @property
+    def up_axis(self):
+        return self.orientation[:, 2]
 
     def get_omega_slice(self):
         return slice(15, 18)
@@ -1221,6 +1251,52 @@ class RocketMover(TranslationalMover, IntegratedMover):
     @property
     def propellant_mass(self):
         return float(self.get_state()[self.get_propellant_mass_slice()][0])
+
+    @property
+    def thrust_cmd(self):
+        return self._thrust_cmd
+
+    @thrust_cmd.setter
+    def thrust_cmd(self, value):
+        self._thrust_cmd = self._coerce_percent_command(value, "thrust_cmd")
+
+    @property
+    def steer_cmd(self):
+        return self._steer_cmd
+
+    @steer_cmd.setter
+    def steer_cmd(self, value):
+        self._steer_cmd = self._coerce_percent_command(value, "steer_cmd")
+
+    @property
+    def steer_direction_body(self):
+        return self._steer_direction_body.copy()
+
+    @steer_direction_body.setter
+    def steer_direction_body(self, value):
+        self._steer_direction_body = self._coerce_body_direction(value, "steer_direction_body")
+
+    def steering_direction_perpendicular_to(self, forward_axis):
+        """Return the commanded steering direction projected into the plane normal to `forward_axis`."""
+        forward_axis = np.asarray(forward_axis, dtype=float)
+        if forward_axis.shape != (3,):
+            raise ValueError("forward_axis must have shape (3,)")
+
+        forward_norm = np.linalg.norm(forward_axis)
+        if forward_norm < 1e-12:
+            raise ValueError("forward_axis must have non-zero magnitude")
+        forward_axis = forward_axis / forward_norm
+
+        direction = self._steer_direction_body - np.dot(self._steer_direction_body, forward_axis) * forward_axis
+        direction_norm = np.linalg.norm(direction)
+        if direction_norm < 1e-12:
+            fallback = np.array([0.0, 1.0, 0.0])
+            if abs(np.dot(fallback, forward_axis)) > 0.95:
+                fallback = np.array([0.0, 0.0, 1.0])
+            direction = fallback - np.dot(fallback, forward_axis) * forward_axis
+            direction_norm = np.linalg.norm(direction)
+
+        return direction / max(direction_norm, 1e-12)
 
     def compute_state_derivative(self, t, state):
         pos = state[self.get_position_slice()]
