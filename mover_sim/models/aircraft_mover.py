@@ -1047,6 +1047,17 @@ class FixedWingAutopilot(Controller):
 class RocketMover(TranslationalMover, IntegratedMover):
     """Rigid-body rocket mover with translational, attitude, and body-rate state."""
 
+    REQUIRED_STAGE_FIELDS = (
+        "dry_mass",
+        "propellant_mass",
+        "reference_area",
+        "drag_coefficient",
+        "rotational_mass",
+        "angular_damping",
+        "max_thrust",
+        "max_steering_moment",
+    )
+
     class OrientationCorrectionEvent(Event):
         """Periodically projects a mover's committed orientation back onto `SO(3)`."""
 
@@ -1081,6 +1092,7 @@ class RocketMover(TranslationalMover, IntegratedMover):
         initial_velocity,
         initial_orientation=None,
         initial_body_rates=None,
+        stages=None,
         mass=10000.0,
         propellant_mass=0.0,
         rotational_mass=None,
@@ -1098,6 +1110,9 @@ class RocketMover(TranslationalMover, IntegratedMover):
             initial_orientation: Optional mover-frame forward, right, up basis matrix in ECEF. If omitted,
                 an orientation is derived from the initial velocity and local vertical.
             initial_body_rates: Optional body angular velocity vector in rad/s.
+            stages: Optional sequence of stage dictionaries. The active stage contributes
+                the integrated propellant state while attached upper stages contribute
+                fixed attached mass until separated.
             mass: Dry or non-propellant mass carried by the rocket in kg.
             propellant_mass: Active propellant mass in kg stored in the state vector.
             rotational_mass: Body rotational-mass tensor as a `(3, 3)` tensor or `(3,)` principal moments.
@@ -1139,9 +1154,13 @@ class RocketMover(TranslationalMover, IntegratedMover):
                 raise ValueError("initial_orientation must have shape (3, 3)")
             initial_orientation = project_to_rotation_matrix(initial_orientation)
 
-        initial_propellant_mass = float(propellant_mass)
-        if initial_propellant_mass < 0.0:
-            raise ValueError("propellant_mass must be non-negative")
+        validated_stages = self._validate_stage_definitions(stages)
+        if validated_stages:
+            initial_propellant_mass = float(validated_stages[0]["propellant_mass"])
+        else:
+            initial_propellant_mass = float(propellant_mass)
+            if initial_propellant_mass < 0.0:
+                raise ValueError("propellant_mass must be non-negative")
 
         state = np.concatenate([
             initial_position,
@@ -1152,15 +1171,33 @@ class RocketMover(TranslationalMover, IntegratedMover):
         ])
         super().__init__(state)
 
-        self.dry_mass = float(mass)
-        self.mass = self.dry_mass + initial_propellant_mass
-        self.rotational_mass = self._coerce_rotational_mass(rotational_mass)
+        self.payload_mass = float(mass)
+        if self.payload_mass < 0.0:
+            raise ValueError("mass must be non-negative")
+
+        self.base_rotational_mass = self._coerce_rotational_mass(rotational_mass)
+        self.base_angular_damping = self._coerce_angular_damping(angular_damping)
+        self.base_area = float(area)
+        self.base_cd0 = float(cd0)
+        self.base_max_thrust = float(max_thrust)
+        self.base_max_steering_moment = float(max_steering_moment)
+
+        self.stages = validated_stages
+        self.active_stage_index = 0
+        self.attached_mass_excluding_active_propellant = self._compute_attached_mass_excluding_active_propellant(
+            self.active_stage_index,
+        )
+
+        self.rotational_mass = self.base_rotational_mass.copy()
         self.inv_rotational_mass = np.linalg.inv(self.rotational_mass)
-        self.area = float(area)
-        self.cd0 = float(cd0)
-        self.max_thrust = float(max_thrust)
-        self.max_steering_moment = float(max_steering_moment)
-        self.angular_damping = self._coerce_angular_damping(angular_damping)
+        self.area = self.base_area
+        self.cd0 = self.base_cd0
+        self.max_thrust = self.base_max_thrust
+        self.max_steering_moment = self.base_max_steering_moment
+        self.angular_damping = self.base_angular_damping.copy()
+        self._apply_active_stage_properties()
+        self.dry_mass = self.attached_mass_excluding_active_propellant
+        self.mass = self.current_total_mass(initial_propellant_mass)
         self.use_coriolis = bool(use_coriolis)
 
         self.thrust_cmd = 0.0
@@ -1200,6 +1237,166 @@ class RocketMover(TranslationalMover, IntegratedMover):
         if angular_damping.shape != (3,):
             raise ValueError("angular_damping must have shape (3,)")
         return angular_damping
+
+    def _validate_nonnegative_scalar(self, value, name):
+        value = float(value)
+        if not np.isfinite(value):
+            raise ValueError(f"{name} must be finite")
+        if value < 0.0:
+            raise ValueError(f"{name} must be non-negative")
+        return value
+
+    def _validate_positive_scalar(self, value, name):
+        value = float(value)
+        if not np.isfinite(value):
+            raise ValueError(f"{name} must be finite")
+        if value <= 0.0:
+            raise ValueError(f"{name} must be greater than 0")
+        return value
+
+    def _validate_thrust_profile(self, thrust_profile, name):
+        if not isinstance(thrust_profile, (list, tuple)) or len(thrust_profile) == 0:
+            raise ValueError(f"{name} must be a non-empty list or tuple")
+
+        validated_profile = []
+        last_time = -np.inf
+        for index, entry in enumerate(thrust_profile):
+            if not isinstance(entry, dict):
+                raise ValueError(f"{name}[{index}] must be a dictionary")
+            if "time" not in entry or "thrust" not in entry:
+                raise ValueError(f"{name}[{index}] must define 'time' and 'thrust'")
+
+            time = self._validate_nonnegative_scalar(entry["time"], f"{name}[{index}].time")
+            thrust = self._validate_nonnegative_scalar(entry["thrust"], f"{name}[{index}].thrust")
+            if time < last_time:
+                raise ValueError(f"{name} times must be monotonically non-decreasing")
+            last_time = time
+            validated_profile.append({"time": time, "thrust": thrust})
+
+        return validated_profile
+
+    def _validate_stage_definitions(self, stages):
+        if stages is None:
+            return []
+        if not isinstance(stages, (list, tuple)):
+            raise ValueError("stages must be a list or tuple of stage definitions")
+
+        validated_stages = []
+        for index, stage in enumerate(stages):
+            if not isinstance(stage, dict):
+                raise ValueError(f"stages[{index}] must be a dictionary")
+
+            validated_stage = dict(stage)
+            for field in self.REQUIRED_STAGE_FIELDS:
+                if field not in validated_stage:
+                    raise ValueError(f"stages[{index}] is missing required field '{field}'")
+
+            validated_stage["dry_mass"] = self._validate_nonnegative_scalar(
+                validated_stage["dry_mass"],
+                f"stages[{index}].dry_mass",
+            )
+            validated_stage["propellant_mass"] = self._validate_nonnegative_scalar(
+                validated_stage["propellant_mass"],
+                f"stages[{index}].propellant_mass",
+            )
+            validated_stage["reference_area"] = self._validate_positive_scalar(
+                validated_stage["reference_area"],
+                f"stages[{index}].reference_area",
+            )
+            validated_stage["drag_coefficient"] = self._validate_nonnegative_scalar(
+                validated_stage["drag_coefficient"],
+                f"stages[{index}].drag_coefficient",
+            )
+            validated_stage["rotational_mass"] = self._coerce_rotational_mass(
+                validated_stage["rotational_mass"],
+            )
+            validated_stage["angular_damping"] = self._coerce_angular_damping(
+                validated_stage["angular_damping"],
+            )
+            validated_stage["max_thrust"] = self._validate_nonnegative_scalar(
+                validated_stage["max_thrust"],
+                f"stages[{index}].max_thrust",
+            )
+            validated_stage["max_steering_moment"] = self._validate_nonnegative_scalar(
+                validated_stage["max_steering_moment"],
+                f"stages[{index}].max_steering_moment",
+            )
+
+            has_burn_duration = "burn_duration" in validated_stage
+            has_mass_flow_rate = "mass_flow_rate" in validated_stage
+            if not has_burn_duration and not has_mass_flow_rate:
+                raise ValueError(
+                    f"stages[{index}] must define either 'burn_duration' or 'mass_flow_rate'"
+                )
+            if has_burn_duration:
+                validated_stage["burn_duration"] = self._validate_positive_scalar(
+                    validated_stage["burn_duration"],
+                    f"stages[{index}].burn_duration",
+                )
+            if has_mass_flow_rate:
+                validated_stage["mass_flow_rate"] = self._validate_positive_scalar(
+                    validated_stage["mass_flow_rate"],
+                    f"stages[{index}].mass_flow_rate",
+                )
+
+            has_thrust = "thrust" in validated_stage
+            has_thrust_profile = "thrust_profile" in validated_stage
+            if not has_thrust and not has_thrust_profile:
+                raise ValueError(
+                    f"stages[{index}] must define either 'thrust' or 'thrust_profile'"
+                )
+            if has_thrust:
+                validated_stage["thrust"] = self._validate_nonnegative_scalar(
+                    validated_stage["thrust"],
+                    f"stages[{index}].thrust",
+                )
+            if has_thrust_profile:
+                validated_stage["thrust_profile"] = self._validate_thrust_profile(
+                    validated_stage["thrust_profile"],
+                    f"stages[{index}].thrust_profile",
+                )
+
+            validated_stages.append(validated_stage)
+
+        return validated_stages
+
+    def _compute_attached_mass_excluding_active_propellant(self, active_stage_index):
+        attached_mass = self.payload_mass
+        if not self.stages:
+            return attached_mass
+
+        if active_stage_index < 0 or active_stage_index >= len(self.stages):
+            raise ValueError("active_stage_index is out of range")
+
+        current_stage = self.stages[active_stage_index]
+        attached_mass += current_stage["dry_mass"]
+        for future_stage in self.stages[active_stage_index + 1:]:
+            attached_mass += future_stage["dry_mass"] + future_stage["propellant_mass"]
+        return attached_mass
+
+    def _apply_active_stage_properties(self):
+        stage = self._active_stage()
+        if stage is None:
+            self.rotational_mass = self.base_rotational_mass.copy()
+            self.angular_damping = self.base_angular_damping.copy()
+            self.area = self.base_area
+            self.cd0 = self.base_cd0
+            self.max_thrust = self.base_max_thrust
+            self.max_steering_moment = self.base_max_steering_moment
+        else:
+            self.rotational_mass = stage["rotational_mass"].copy()
+            self.angular_damping = stage["angular_damping"].copy()
+            self.area = float(stage["reference_area"])
+            self.cd0 = float(stage["drag_coefficient"])
+            self.max_thrust = float(stage["max_thrust"])
+            self.max_steering_moment = float(stage["max_steering_moment"])
+
+        self.inv_rotational_mass = np.linalg.inv(self.rotational_mass)
+
+    def _active_stage(self):
+        if not self.stages or self.active_stage_index >= len(self.stages):
+            return None
+        return self.stages[self.active_stage_index]
 
     def _coerce_percent_command(self, value, name):
         value = float(value)
@@ -1297,6 +1494,62 @@ class RocketMover(TranslationalMover, IntegratedMover):
             direction_norm = np.linalg.norm(direction)
 
         return direction / max(direction_norm, 1e-12)
+
+    def current_total_mass(self, propellant_mass=None):
+        if propellant_mass is None:
+            propellant_mass = self.propellant_mass
+        propellant_mass = self._validate_nonnegative_scalar(propellant_mass, "propellant_mass")
+        return self.attached_mass_excluding_active_propellant + propellant_mass
+
+    def current_mass_flow_rate(self, t, propellant_mass=None):
+        del t
+        if propellant_mass is None:
+            propellant_mass = self.propellant_mass
+        propellant_mass = self._validate_nonnegative_scalar(propellant_mass, "propellant_mass")
+        if propellant_mass <= 0.0:
+            return 0.0
+
+        throttle_fraction = self.thrust_cmd / 100.0
+        if throttle_fraction <= 0.0:
+            return 0.0
+
+        stage = self._active_stage()
+        if stage is None:
+            return 0.0
+        if "mass_flow_rate" in stage:
+            return throttle_fraction * float(stage["mass_flow_rate"])
+        return throttle_fraction * stage["propellant_mass"] / stage["burn_duration"]
+
+    def current_stage_thrust(self, t, propellant_mass=None):
+        if propellant_mass is None:
+            propellant_mass = self.propellant_mass
+        propellant_mass = self._validate_nonnegative_scalar(propellant_mass, "propellant_mass")
+        if propellant_mass <= 0.0:
+            return 0.0
+
+        throttle_fraction = self.thrust_cmd / 100.0
+        if throttle_fraction <= 0.0:
+            return 0.0
+
+        stage = self._active_stage()
+        if stage is None:
+            return throttle_fraction * self.max_thrust
+        if "thrust" in stage:
+            return throttle_fraction * float(stage["thrust"])
+
+        thrust_profile = stage.get("thrust_profile", [])
+        for entry in thrust_profile:
+            if t <= entry["time"]:
+                return throttle_fraction * float(entry["thrust"])
+        return throttle_fraction * float(thrust_profile[-1]["thrust"])
+
+    def has_active_burn(self, propellant_mass=None):
+        if propellant_mass is None:
+            propellant_mass = self.propellant_mass
+        propellant_mass = self._validate_nonnegative_scalar(propellant_mass, "propellant_mass")
+        if propellant_mass <= 0.0:
+            return False
+        return self.current_mass_flow_rate(0.0, propellant_mass=propellant_mass) > 0.0
 
     def compute_state_derivative(self, t, state):
         pos = state[self.get_position_slice()]
