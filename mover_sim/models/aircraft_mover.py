@@ -1815,6 +1815,7 @@ class RocketController(Controller):
         self._published_burnout_stage_indices = set()
         self._published_separation_stage_indices = set()
         self._ballistic_coast_published = False
+        self._ground_impact_published = False
 
     def _coerce_optional_vector3(self, value, name):
         if value is None:
@@ -1971,6 +1972,22 @@ class RocketController(Controller):
         engine.broker.publish("ballistic_coast_start", self.platform)
         self._ballistic_coast_published = True
 
+    def _publish_ground_impact(self, engine):
+        if self._ground_impact_published:
+            return
+        engine.broker.publish("ground_impact", self.platform)
+        self._ground_impact_published = True
+
+    def _has_ground_impact(self, mover):
+        _, _, altitude = ecef_to_lla(mover.position[0], mover.position[1], mover.position[2])
+        return altitude < 0.0
+
+    def _enter_impact_phase(self, engine, mover, t):
+        mover.thrust_cmd = 0.0
+        mover.steer_cmd = 0.0
+        self._enter_phase(self.IMPACT, t)
+        self._publish_ground_impact(engine)
+
     def _burnout_detected(self, mover):
         if not mover.stages:
             return False
@@ -2055,6 +2072,15 @@ class RocketController(Controller):
 
         if self.phase_start_time is None:
             self.phase_start_time = float(t)
+
+        if self.phase != self.IMPACT and self._has_ground_impact(mover):
+            self._enter_impact_phase(engine, mover, t)
+            return
+
+        if self.phase == self.IMPACT:
+            mover.thrust_cmd = 0.0
+            mover.steer_cmd = 0.0
+            return
 
         if self.phase == self.STAGE_SEPARATION:
             self._update_stage_separation(t, engine, mover)

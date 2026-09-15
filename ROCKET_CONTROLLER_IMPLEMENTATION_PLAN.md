@@ -162,7 +162,7 @@ Checkpoint:
 Validation:
 - Confirm each event fires once in a representative run.
 
-### Step 8: Add impact / end-of-flight handling
+### Step 8: Add impact / end-of-flight handling - Next step
 
 Goal:
 - Ensure the controller terminates cleanly once the missile hits the ground.

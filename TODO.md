@@ -1,7 +1,6 @@
 
 * Rocket guidance
-    * remove thrust_profile
-    * 
+    * resume from step 8
 
 ### Grand TODO
 

@@ -1605,6 +1605,47 @@ def test_rocket_controller_publishes_stage_and_coast_events_once():
     assert coast_events == ["rocket_event_flow"]
 
 
+def test_rocket_controller_enters_impact_phase_and_publishes_ground_impact_once():
+    engine = SimulationEngine()
+    engine.running = True
+
+    pos = lla_to_ecef(0.0, 0.0, -10.0)
+    initial_position = np.asarray(pos, dtype=float).copy()
+    vel = np.zeros(3)
+    mover = RocketMover(
+        pos,
+        vel,
+        initial_orientation=np.eye(3),
+        use_coriolis=False,
+    )
+    controller = RocketController(
+        initial_phase=RocketController.POWERED_ASCENT,
+        update_interval=0.1,
+    )
+    platform = Platform("rocket_impact", mover, controller)
+    engine.register_platform(platform)
+
+    impact_events = []
+    engine.broker.subscribe(
+        "ground_impact",
+        lambda event_platform: impact_events.append(event_platform.id),
+    )
+
+    controller.initialize(engine)
+    mover.thrust_cmd = 100.0
+    mover.steer_cmd = 75.0
+
+    controller.update(engine.t, engine)
+    controller.update(engine.t + 1.0, engine)
+
+    assert controller.phase == RocketController.IMPACT
+    assert mover.thrust_cmd == 0.0
+    assert mover.steer_cmd == 0.0
+    assert impact_events == ["rocket_impact"]
+    assert engine.running is True
+    assert np.allclose(mover.position, initial_position)
+
+
 def test_rocket_orientation_correction_event_projects_committed_state():
     engine = SimulationEngine()
 
