@@ -1213,6 +1213,50 @@ def test_rocket_controller_rejects_invalid_initial_phase():
         RocketController(initial_phase="invalid")
 
 
+def test_rocket_controller_rejects_invalid_ascent_program_inputs():
+    target_position_ecef = lla_to_ecef(0.0, 1.0, 0.0)
+
+    with pytest.raises(ValueError, match="vertical_rise_time"):
+        RocketController(target_position_ecef=target_position_ecef, vertical_rise_time=-1.0)
+
+    with pytest.raises(ValueError, match="pitch_over_duration"):
+        RocketController(target_position_ecef=target_position_ecef, pitch_over_duration=-0.5)
+
+    with pytest.raises(ValueError, match="steer_kp"):
+        RocketController(target_position_ecef=target_position_ecef, steer_kp=-0.1)
+
+    with pytest.raises(ValueError, match="update_interval"):
+        RocketController(target_position_ecef=target_position_ecef, update_interval=0.0)
+
+    with pytest.raises(ValueError, match="target_position_ecef"):
+        RocketController(target_position_ecef=[1.0, 2.0])
+
+
+def test_rocket_controller_accepts_scenario_style_ascent_program_inputs():
+    target_position_ecef = lla_to_ecef(30.0, 20.0, 0.0)
+
+    controller = RocketController(
+        target_position_ecef=target_position_ecef,
+        vertical_rise_time=4.0,
+        pitch_over_duration=8.0,
+        target_ascent_pitch=np.radians(35.0),
+        steer_kp=1.5,
+        steer_kd=0.25,
+        separation_delay=1.0,
+        update_interval=0.2,
+    )
+
+    assert np.allclose(controller.target_position_ecef, target_position_ecef)
+    assert controller.launch_azimuth is None
+    assert controller.vertical_rise_time == 4.0
+    assert controller.pitch_over_duration == 8.0
+    assert np.isclose(controller.target_ascent_pitch, np.radians(35.0))
+    assert controller.steer_kp == 1.5
+    assert controller.steer_kd == 0.25
+    assert controller.separation_delay == 1.0
+    assert controller.update_interval == 0.2
+
+
 def test_rocket_controller_ballistic_coast_holds_safe_zero_commands():
     engine = SimulationEngine()
 
@@ -1296,6 +1340,7 @@ def test_rocket_controller_powered_ascent_generates_transverse_steering_command(
     engine = SimulationEngine()
 
     pos = lla_to_ecef(0.0, 0.0, 1500.0)
+    target_position_ecef = lla_to_ecef(0.0, 1.0, 1500.0)
     vel = np.zeros(3)
     mover = RocketMover(
         pos,
@@ -1304,7 +1349,7 @@ def test_rocket_controller_powered_ascent_generates_transverse_steering_command(
         use_coriolis=False,
     )
     controller = RocketController(
-        launch_azimuth=0.0,
+        target_position_ecef=target_position_ecef,
         target_ascent_pitch=0.0,
         initial_phase=RocketController.POWERED_ASCENT,
         update_interval=0.1,

@@ -1726,7 +1726,7 @@ class RocketMover(TranslationalMover, IntegratedMover):
 
 
 class RocketController(Controller):
-    """Phase-based controller scaffold for `RocketMover` missions."""
+    """Simple phase-based controller for `RocketMover` ballistic missions."""
 
     BOOST_VERTICAL = "boost_vertical"
     PITCH_OVER = "pitch_over"
@@ -1746,7 +1746,7 @@ class RocketController(Controller):
 
     def __init__(
         self,
-        target_position=None,
+        target_position_ecef=None,
         launch_azimuth=None,
         vertical_rise_time=0.0,
         pitch_over_duration=0.0,
@@ -1757,13 +1757,14 @@ class RocketController(Controller):
         update_interval=0.1,
         initial_phase=None,
     ):
-        """Create a reusable controller scaffold for `RocketMover`.
+        """Create a minimal ascent-program controller for `RocketMover`.
 
         Parameters:
-            target_position: Optional ECEF target position vector used by later
-                guidance steps.
-            launch_azimuth: Optional ascent azimuth in radians used by later
-                guidance steps.
+            target_position_ecef: Optional ECEF target position vector. When
+                `launch_azimuth` is omitted, the controller derives an ascent
+                azimuth from the current position toward this target.
+            launch_azimuth: Optional ascent azimuth in radians. When provided,
+                it overrides any azimuth derived from `target_position_ecef`.
             vertical_rise_time: Initial vertical-boost duration in seconds.
             pitch_over_duration: Pitch-over transition duration in seconds.
             target_ascent_pitch: Optional target ascent pitch angle in radians
@@ -1780,23 +1781,71 @@ class RocketController(Controller):
         if phase not in self.VALID_PHASES:
             raise ValueError(f"initial_phase must be one of {sorted(self.VALID_PHASES)}")
 
-        self.target_position = (
-            None if target_position is None else np.asarray(target_position, dtype=float)
+        self.target_position_ecef = self._coerce_optional_vector3(
+            target_position_ecef,
+            "target_position_ecef",
         )
-        if self.target_position is not None and self.target_position.shape != (3,):
-            raise ValueError("target_position must have shape (3,)")
+        self.launch_azimuth = self._coerce_optional_finite_scalar(
+            launch_azimuth,
+            "launch_azimuth",
+        )
+        self.vertical_rise_time = self._coerce_nonnegative_scalar(
+            vertical_rise_time,
+            "vertical_rise_time",
+        )
+        self.pitch_over_duration = self._coerce_nonnegative_scalar(
+            pitch_over_duration,
+            "pitch_over_duration",
+        )
+        self.target_ascent_pitch = self._coerce_optional_finite_scalar(
+            target_ascent_pitch,
+            "target_ascent_pitch",
+        )
+        self.steer_kp = self._coerce_nonnegative_scalar(steer_kp, "steer_kp")
+        self.steer_kd = self._coerce_nonnegative_scalar(steer_kd, "steer_kd")
+        self.separation_delay = self._coerce_nonnegative_scalar(
+            separation_delay,
+            "separation_delay",
+        )
+        update_interval = self._coerce_positive_scalar(update_interval, "update_interval")
+        self.update_interval = update_interval
 
-        self.launch_azimuth = None if launch_azimuth is None else float(launch_azimuth)
-        self.vertical_rise_time = float(vertical_rise_time)
-        self.pitch_over_duration = float(pitch_over_duration)
-        self.target_ascent_pitch = (
-            None if target_ascent_pitch is None else float(target_ascent_pitch)
-        )
-        self.steer_kp = float(steer_kp)
-        self.steer_kd = float(steer_kd)
-        self.separation_delay = float(separation_delay)
         self.phase = phase
         self.phase_start_time = None
+
+    def _coerce_optional_vector3(self, value, name):
+        if value is None:
+            return None
+        vector = np.asarray(value, dtype=float)
+        if vector.shape != (3,):
+            raise ValueError(f"{name} must have shape (3,)")
+        if not np.all(np.isfinite(vector)):
+            raise ValueError(f"{name} must contain only finite values")
+        return vector
+
+    def _coerce_optional_finite_scalar(self, value, name):
+        if value is None:
+            return None
+        scalar = float(value)
+        if not np.isfinite(scalar):
+            raise ValueError(f"{name} must be finite")
+        return scalar
+
+    def _coerce_nonnegative_scalar(self, value, name):
+        scalar = float(value)
+        if not np.isfinite(scalar):
+            raise ValueError(f"{name} must be finite")
+        if scalar < 0.0:
+            raise ValueError(f"{name} must be non-negative")
+        return scalar
+
+    def _coerce_positive_scalar(self, value, name):
+        scalar = float(value)
+        if not np.isfinite(scalar):
+            raise ValueError(f"{name} must be finite")
+        if scalar <= 0.0:
+            raise ValueError(f"{name} must be greater than 0")
+        return scalar
 
     def _enter_phase(self, phase, t):
         if phase not in self.VALID_PHASES:
@@ -1839,8 +1888,8 @@ class RocketController(Controller):
             return self.launch_azimuth
 
         east, north, up = self._local_enu_basis(mover.position)
-        if self.target_position is not None:
-            rel = self.target_position - mover.position
+        if self.target_position_ecef is not None:
+            rel = self.target_position_ecef - mover.position
             rel_horizontal = rel - np.dot(rel, up) * up
             rel_horizontal_norm = np.linalg.norm(rel_horizontal)
             if rel_horizontal_norm > 1e-8:
@@ -1932,9 +1981,9 @@ class RocketController(Controller):
     def update(self, t, engine):
         """Advance the controller phase machine for a `RocketMover`.
 
-        This initial implementation only defines the controller structure and
-        safe per-phase command defaults. Guidance laws and phase transitions are
-        added in later implementation steps.
+        The controller uses a small ascent program: boost vertically, pitch over
+        toward the launch azimuth, then hold the target ascent pitch while the
+        later staging logic decides when to separate and coast.
         """
         del engine
         mover = self.platform.mover
