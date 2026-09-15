@@ -1946,6 +1946,43 @@ class RocketController(Controller):
             pitch = target_ascent_pitch
         return self._forward_direction_from_pitch(horizontal_direction, up, pitch)
 
+    def _powered_flight_phase(self):
+        return self.phase in (self.BOOST_VERTICAL, self.PITCH_OVER, self.POWERED_ASCENT)
+
+    def _burnout_detected(self, mover):
+        if not mover.stages:
+            return False
+        propellant_mass = mover.propellant_mass
+        if propellant_mass <= 0.0:
+            return True
+        stage = mover._active_stage()
+        if stage is None:
+            return True
+        if "mass_flow_rate" in stage:
+            return float(stage["mass_flow_rate"]) <= 0.0
+        return (stage["propellant_mass"] / stage["burn_duration"]) <= 0.0
+
+    def _begin_post_burnout_phase(self, mover, t):
+        mover.thrust_cmd = 0.0
+        mover.steer_cmd = 0.0
+        if mover.can_separate_stage():
+            self._enter_phase(self.STAGE_SEPARATION, t)
+            return
+        self._enter_phase(self.BALLISTIC_COAST, t)
+
+    def _update_stage_separation(self, t, engine, mover):
+        mover.thrust_cmd = 0.0
+        mover.steer_cmd = 0.0
+        if self._phase_elapsed(t) < self.separation_delay:
+            return
+
+        if mover.can_separate_stage():
+            mover.advance_to_next_stage(engine)
+            self._enter_phase(self.POWERED_ASCENT, t)
+            return
+
+        self._enter_phase(self.BALLISTIC_COAST, t)
+
     def _apply_pointing_guidance(self, mover, desired_forward):
         if desired_forward is None:
             mover.steer_cmd = 0.0
@@ -1983,9 +2020,8 @@ class RocketController(Controller):
 
         The controller uses a small ascent program: boost vertically, pitch over
         toward the launch azimuth, then hold the target ascent pitch while the
-        later staging logic decides when to separate and coast.
+        staging logic decides when to separate and coast.
         """
-        del engine
         mover = self.platform.mover
         if not isinstance(mover, RocketMover):
             return
@@ -1993,7 +2029,15 @@ class RocketController(Controller):
         if self.phase_start_time is None:
             self.phase_start_time = float(t)
 
+        if self.phase == self.STAGE_SEPARATION:
+            self._update_stage_separation(t, engine, mover)
+            return
+
         self._advance_guidance_phase(t)
+
+        if self._powered_flight_phase() and self._burnout_detected(mover):
+            self._begin_post_burnout_phase(mover, t)
+            return
 
         if self.phase in (self.STAGE_SEPARATION, self.BALLISTIC_COAST, self.IMPACT):
             mover.thrust_cmd = 0.0

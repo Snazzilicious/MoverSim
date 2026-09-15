@@ -1367,6 +1367,165 @@ def test_rocket_controller_powered_ascent_generates_transverse_steering_command(
     assert np.isclose(np.linalg.norm(mover.steer_direction_body), 1.0, atol=1e-12)
 
 
+def test_rocket_controller_burnout_enters_stage_separation_for_multistage_vehicle():
+    engine = SimulationEngine()
+
+    pos = lla_to_ecef(0.0, 0.0, 1500.0)
+    vel = np.zeros(3)
+    mover = RocketMover(
+        pos,
+        vel,
+        stages=[
+            {
+                "dry_mass": 700.0,
+                "propellant_mass": 30.0,
+                "reference_area": 1.5,
+                "drag_coefficient": 0.12,
+                "rotational_mass": np.diag([1800.0, 5000.0, 5000.0]),
+                "angular_damping": np.array([900.0, 1600.0, 1600.0]),
+                "max_thrust": 90000.0,
+                "max_steering_moment": 7000.0,
+                "mass_flow_rate": 10.0,
+                "thrust": 85000.0,
+            },
+            {
+                "dry_mass": 300.0,
+                "propellant_mass": 20.0,
+                "reference_area": 0.9,
+                "drag_coefficient": 0.2,
+                "rotational_mass": np.diag([900.0, 2200.0, 2200.0]),
+                "angular_damping": np.array([400.0, 700.0, 700.0]),
+                "max_thrust": 30000.0,
+                "max_steering_moment": 2500.0,
+                "mass_flow_rate": 5.0,
+                "thrust": 28000.0,
+            },
+        ],
+        mass=100.0,
+        use_coriolis=False,
+    )
+    controller = RocketController(
+        initial_phase=RocketController.POWERED_ASCENT,
+        separation_delay=2.0,
+        update_interval=0.1,
+    )
+    platform = Platform("rocket_multistage_burnout", mover, controller)
+    engine.register_platform(platform)
+
+    controller.initialize(engine)
+    mover._set_propellant_mass_state_in_engine(0.0, engine)
+    controller.update(engine.t, engine)
+
+    assert controller.phase == RocketController.STAGE_SEPARATION
+    assert mover.thrust_cmd == 0.0
+    assert mover.steer_cmd == 0.0
+
+
+def test_rocket_controller_stage_separation_advances_stage_after_delay():
+    engine = SimulationEngine()
+
+    pos = lla_to_ecef(0.0, 0.0, 1500.0)
+    vel = np.zeros(3)
+    mover = RocketMover(
+        pos,
+        vel,
+        stages=[
+            {
+                "dry_mass": 700.0,
+                "propellant_mass": 30.0,
+                "reference_area": 1.5,
+                "drag_coefficient": 0.12,
+                "rotational_mass": np.diag([1800.0, 5000.0, 5000.0]),
+                "angular_damping": np.array([900.0, 1600.0, 1600.0]),
+                "max_thrust": 90000.0,
+                "max_steering_moment": 7000.0,
+                "mass_flow_rate": 10.0,
+                "thrust": 85000.0,
+            },
+            {
+                "dry_mass": 300.0,
+                "propellant_mass": 20.0,
+                "reference_area": 0.9,
+                "drag_coefficient": 0.2,
+                "rotational_mass": np.diag([900.0, 2200.0, 2200.0]),
+                "angular_damping": np.array([400.0, 700.0, 700.0]),
+                "max_thrust": 30000.0,
+                "max_steering_moment": 2500.0,
+                "mass_flow_rate": 5.0,
+                "thrust": 28000.0,
+            },
+        ],
+        mass=100.0,
+        use_coriolis=False,
+    )
+    controller = RocketController(
+        initial_phase=RocketController.POWERED_ASCENT,
+        separation_delay=2.0,
+        update_interval=0.1,
+    )
+    platform = Platform("rocket_stage_advance", mover, controller)
+    engine.register_platform(platform)
+
+    controller.initialize(engine)
+    mover._set_propellant_mass_state_in_engine(0.0, engine)
+    controller.update(0.0, engine)
+    controller.update(1.0, engine)
+
+    assert controller.phase == RocketController.STAGE_SEPARATION
+    assert mover.active_stage_index == 0
+
+    controller.update(2.0, engine)
+
+    assert controller.phase == RocketController.POWERED_ASCENT
+    assert mover.active_stage_index == 1
+    assert np.isclose(mover.propellant_mass, 20.0)
+
+    controller.update(2.1, engine)
+    assert mover.thrust_cmd == 100.0
+
+
+def test_rocket_controller_final_stage_burnout_transitions_to_ballistic_coast():
+    engine = SimulationEngine()
+
+    pos = lla_to_ecef(0.0, 0.0, 1500.0)
+    vel = np.zeros(3)
+    mover = RocketMover(
+        pos,
+        vel,
+        stages=[
+            {
+                "dry_mass": 700.0,
+                "propellant_mass": 30.0,
+                "reference_area": 1.5,
+                "drag_coefficient": 0.12,
+                "rotational_mass": np.diag([1800.0, 5000.0, 5000.0]),
+                "angular_damping": np.array([900.0, 1600.0, 1600.0]),
+                "max_thrust": 90000.0,
+                "max_steering_moment": 7000.0,
+                "mass_flow_rate": 10.0,
+                "thrust": 85000.0,
+            },
+        ],
+        mass=100.0,
+        use_coriolis=False,
+    )
+    controller = RocketController(
+        initial_phase=RocketController.POWERED_ASCENT,
+        separation_delay=2.0,
+        update_interval=0.1,
+    )
+    platform = Platform("rocket_final_burnout", mover, controller)
+    engine.register_platform(platform)
+
+    controller.initialize(engine)
+    mover._set_propellant_mass_state_in_engine(0.0, engine)
+    controller.update(engine.t, engine)
+
+    assert controller.phase == RocketController.BALLISTIC_COAST
+    assert mover.thrust_cmd == 0.0
+    assert mover.steer_cmd == 0.0
+
+
 def test_rocket_orientation_correction_event_projects_committed_state():
     engine = SimulationEngine()
 
