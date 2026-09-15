@@ -1,11 +1,13 @@
 
+* Rocket guidance
+    * remove thrust_profile
+    * 
 
 ### Grand TODO
 
 * Redesign Aircraft movers
-    * Rocket mover
     * Rocket guidance
-        * Waypoints or whatever
+        * Waypoints or whatever - need to investigate this
         * Trigger stage separation
     * Ballistic mover
         * for expended stages

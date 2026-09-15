@@ -1270,27 +1270,6 @@ class RocketMover(TranslationalMover, IntegratedMover):
             raise ValueError(f"{name} must be greater than 0")
         return value
 
-    def _validate_thrust_profile(self, thrust_profile, name):
-        if not isinstance(thrust_profile, (list, tuple)) or len(thrust_profile) == 0:
-            raise ValueError(f"{name} must be a non-empty list or tuple")
-
-        validated_profile = []
-        last_time = -np.inf
-        for index, entry in enumerate(thrust_profile):
-            if not isinstance(entry, dict):
-                raise ValueError(f"{name}[{index}] must be a dictionary")
-            if "time" not in entry or "thrust" not in entry:
-                raise ValueError(f"{name}[{index}] must define 'time' and 'thrust'")
-
-            time = self._validate_nonnegative_scalar(entry["time"], f"{name}[{index}].time")
-            thrust = self._validate_nonnegative_scalar(entry["thrust"], f"{name}[{index}].thrust")
-            if time < last_time:
-                raise ValueError(f"{name} times must be monotonically non-decreasing")
-            last_time = time
-            validated_profile.append({"time": time, "thrust": thrust})
-
-        return validated_profile
-
     def _validate_stage_definitions(self, stages):
         if stages is None:
             return []
@@ -1365,22 +1344,12 @@ class RocketMover(TranslationalMover, IntegratedMover):
                     f"stages[{index}].mass_flow_rate",
                 )
 
-            has_thrust = "thrust" in validated_stage
-            has_thrust_profile = "thrust_profile" in validated_stage
-            if not has_thrust and not has_thrust_profile:
-                raise ValueError(
-                    f"stages[{index}] must define either 'thrust' or 'thrust_profile'"
-                )
-            if has_thrust:
-                validated_stage["thrust"] = self._validate_nonnegative_scalar(
-                    validated_stage["thrust"],
-                    f"stages[{index}].thrust",
-                )
-            if has_thrust_profile:
-                validated_stage["thrust_profile"] = self._validate_thrust_profile(
-                    validated_stage["thrust_profile"],
-                    f"stages[{index}].thrust_profile",
-                )
+            if "thrust" not in validated_stage:
+                raise ValueError(f"stages[{index}] must define 'thrust'")
+            validated_stage["thrust"] = self._validate_nonnegative_scalar(
+                validated_stage["thrust"],
+                f"stages[{index}].thrust",
+            )
 
             validated_stages.append(validated_stage)
 
@@ -1592,6 +1561,7 @@ class RocketMover(TranslationalMover, IntegratedMover):
         return throttle_fraction * stage["propellant_mass"] / stage["burn_duration"]
 
     def current_stage_thrust(self, t, propellant_mass=None):
+        del t
         if propellant_mass is None:
             propellant_mass = self.propellant_mass
         propellant_mass = self._validate_nonnegative_scalar(propellant_mass, "propellant_mass")
@@ -1605,14 +1575,7 @@ class RocketMover(TranslationalMover, IntegratedMover):
         stage = self._active_stage()
         if stage is None:
             return throttle_fraction * self.max_thrust
-        if "thrust" in stage:
-            return throttle_fraction * float(stage["thrust"])
-
-        thrust_profile = stage.get("thrust_profile", [])
-        for entry in thrust_profile:
-            if t <= entry["time"]:
-                return throttle_fraction * float(entry["thrust"])
-        return throttle_fraction * float(thrust_profile[-1]["thrust"])
+        return throttle_fraction * float(stage["thrust"])
 
     def has_active_burn(self, propellant_mass=None):
         if propellant_mass is None:
