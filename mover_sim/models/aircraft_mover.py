@@ -1725,5 +1725,106 @@ class RocketMover(TranslationalMover, IntegratedMover):
         return np.concatenate([dpos, dvel, dorientation.reshape(-1), domega, dpropellant_mass])
 
 
-        
-    
+class RocketController(Controller):
+    """Phase-based controller scaffold for `RocketMover` missions."""
+
+    BOOST_VERTICAL = "boost_vertical"
+    PITCH_OVER = "pitch_over"
+    POWERED_ASCENT = "powered_ascent"
+    STAGE_SEPARATION = "stage_separation"
+    BALLISTIC_COAST = "ballistic_coast"
+    IMPACT = "impact"
+
+    VALID_PHASES = {
+        BOOST_VERTICAL,
+        PITCH_OVER,
+        POWERED_ASCENT,
+        STAGE_SEPARATION,
+        BALLISTIC_COAST,
+        IMPACT,
+    }
+
+    def __init__(
+        self,
+        target_position=None,
+        launch_azimuth=None,
+        vertical_rise_time=0.0,
+        pitch_over_duration=0.0,
+        target_ascent_pitch=None,
+        separation_delay=0.0,
+        update_interval=0.1,
+        initial_phase=None,
+    ):
+        """Create a reusable controller scaffold for `RocketMover`.
+
+        Parameters:
+            target_position: Optional ECEF target position vector used by later
+                guidance steps.
+            launch_azimuth: Optional ascent azimuth in radians used by later
+                guidance steps.
+            vertical_rise_time: Initial vertical-boost duration in seconds.
+            pitch_over_duration: Pitch-over transition duration in seconds.
+            target_ascent_pitch: Optional target ascent pitch angle in radians.
+            separation_delay: Delay between burnout and stage separation in seconds.
+            update_interval: Controller execution period in seconds.
+            initial_phase: Optional initial phase constant. Defaults to
+                `BOOST_VERTICAL`.
+        """
+        super().__init__(update_interval=update_interval)
+        phase = self.BOOST_VERTICAL if initial_phase is None else initial_phase
+        if phase not in self.VALID_PHASES:
+            raise ValueError(f"initial_phase must be one of {sorted(self.VALID_PHASES)}")
+
+        self.target_position = (
+            None if target_position is None else np.asarray(target_position, dtype=float)
+        )
+        if self.target_position is not None and self.target_position.shape != (3,):
+            raise ValueError("target_position must have shape (3,)")
+
+        self.launch_azimuth = None if launch_azimuth is None else float(launch_azimuth)
+        self.vertical_rise_time = float(vertical_rise_time)
+        self.pitch_over_duration = float(pitch_over_duration)
+        self.target_ascent_pitch = (
+            None if target_ascent_pitch is None else float(target_ascent_pitch)
+        )
+        self.separation_delay = float(separation_delay)
+        self.phase = phase
+        self.phase_start_time = None
+
+    def _enter_phase(self, phase, t):
+        if phase not in self.VALID_PHASES:
+            raise ValueError(f"phase must be one of {sorted(self.VALID_PHASES)}")
+        self.phase = phase
+        self.phase_start_time = float(t)
+
+    def initialize(self, engine):
+        super().initialize(engine)
+        if self.phase_start_time is None:
+            self.phase_start_time = float(engine.t)
+
+    def update(self, t, engine):
+        """Advance the controller phase machine for a `RocketMover`.
+
+        This initial implementation only defines the controller structure and
+        safe per-phase command defaults. Guidance laws and phase transitions are
+        added in later implementation steps.
+        """
+        del engine
+        mover = self.platform.mover
+        if not isinstance(mover, RocketMover):
+            return
+
+        if self.phase_start_time is None:
+            self.phase_start_time = float(t)
+
+        if self.phase in (self.STAGE_SEPARATION, self.BALLISTIC_COAST, self.IMPACT):
+            mover.thrust_cmd = 0.0
+            mover.steer_cmd = 0.0
+            return
+
+        if self.phase in (self.BOOST_VERTICAL, self.PITCH_OVER, self.POWERED_ASCENT):
+            mover.thrust_cmd = 0.0
+            mover.steer_cmd = 0.0
+            return
+
+        raise RuntimeError(f"unhandled rocket-controller phase: {self.phase}")
