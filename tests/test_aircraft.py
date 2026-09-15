@@ -1213,13 +1213,16 @@ def test_rocket_controller_rejects_invalid_initial_phase():
         RocketController(initial_phase="invalid")
 
 
-def test_rocket_controller_initialize_and_update_hold_safe_zero_commands():
+def test_rocket_controller_ballistic_coast_holds_safe_zero_commands():
     engine = SimulationEngine()
 
     pos = lla_to_ecef(0.0, 0.0, 1500.0)
     vel = np.array([0.0, 0.0, 0.0])
     mover = RocketMover(pos, vel, use_coriolis=False)
-    controller = RocketController(update_interval=0.1)
+    controller = RocketController(
+        initial_phase=RocketController.BALLISTIC_COAST,
+        update_interval=0.1,
+    )
     platform = Platform("rocket_controller", mover, controller)
     engine.register_platform(platform)
 
@@ -1232,6 +1235,91 @@ def test_rocket_controller_initialize_and_update_hold_safe_zero_commands():
 
     assert mover.thrust_cmd == 0.0
     assert mover.steer_cmd == 0.0
+
+
+def test_rocket_controller_boost_vertical_commands_full_thrust_when_aligned_with_up():
+    engine = SimulationEngine()
+
+    pos = lla_to_ecef(0.0, 0.0, 1500.0)
+    vel = np.zeros(3)
+    mover = RocketMover(
+        pos,
+        vel,
+        initial_orientation=np.eye(3),
+        use_coriolis=False,
+    )
+    controller = RocketController(vertical_rise_time=1.0, update_interval=0.1)
+    platform = Platform("rocket_boost_vertical", mover, controller)
+    engine.register_platform(platform)
+
+    controller.initialize(engine)
+    controller.update(engine.t, engine)
+
+    assert controller.phase == RocketController.BOOST_VERTICAL
+    assert mover.thrust_cmd == 100.0
+    assert mover.steer_cmd == 0.0
+
+
+def test_rocket_controller_transitions_from_boost_to_pitch_over_to_powered_ascent():
+    engine = SimulationEngine()
+
+    pos = lla_to_ecef(0.0, 0.0, 1500.0)
+    vel = np.zeros(3)
+    mover = RocketMover(
+        pos,
+        vel,
+        initial_orientation=np.eye(3),
+        use_coriolis=False,
+    )
+    controller = RocketController(
+        vertical_rise_time=1.0,
+        pitch_over_duration=2.0,
+        target_ascent_pitch=0.0,
+        launch_azimuth=0.0,
+        update_interval=0.1,
+    )
+    platform = Platform("rocket_phase_progression", mover, controller)
+    engine.register_platform(platform)
+
+    controller.initialize(engine)
+    controller.update(0.0, engine)
+    assert controller.phase == RocketController.BOOST_VERTICAL
+
+    controller.update(1.0, engine)
+    assert controller.phase == RocketController.PITCH_OVER
+
+    controller.update(3.0, engine)
+    assert controller.phase == RocketController.POWERED_ASCENT
+
+
+def test_rocket_controller_powered_ascent_generates_transverse_steering_command():
+    engine = SimulationEngine()
+
+    pos = lla_to_ecef(0.0, 0.0, 1500.0)
+    vel = np.zeros(3)
+    mover = RocketMover(
+        pos,
+        vel,
+        initial_orientation=np.eye(3),
+        use_coriolis=False,
+    )
+    controller = RocketController(
+        launch_azimuth=0.0,
+        target_ascent_pitch=0.0,
+        initial_phase=RocketController.POWERED_ASCENT,
+        update_interval=0.1,
+    )
+    platform = Platform("rocket_pointing", mover, controller)
+    engine.register_platform(platform)
+
+    controller.initialize(engine)
+    controller.update(engine.t, engine)
+
+    assert mover.thrust_cmd == 100.0
+    assert mover.steer_cmd > 0.0
+    assert mover.steer_cmd <= 100.0
+    assert np.isclose(mover.steer_direction_body[0], 0.0, atol=1e-12)
+    assert np.isclose(np.linalg.norm(mover.steer_direction_body), 1.0, atol=1e-12)
 
 
 def test_rocket_orientation_correction_event_projects_committed_state():

@@ -1751,6 +1751,8 @@ class RocketController(Controller):
         vertical_rise_time=0.0,
         pitch_over_duration=0.0,
         target_ascent_pitch=None,
+        steer_kp=2.0,
+        steer_kd=0.5,
         separation_delay=0.0,
         update_interval=0.1,
         initial_phase=None,
@@ -1764,7 +1766,10 @@ class RocketController(Controller):
                 guidance steps.
             vertical_rise_time: Initial vertical-boost duration in seconds.
             pitch_over_duration: Pitch-over transition duration in seconds.
-            target_ascent_pitch: Optional target ascent pitch angle in radians.
+            target_ascent_pitch: Optional target ascent pitch angle in radians
+                above local horizontal. Defaults to 45 degrees when omitted.
+            steer_kp: Proportional gain applied to body-frame pointing error.
+            steer_kd: Damping gain applied to transverse body rates.
             separation_delay: Delay between burnout and stage separation in seconds.
             update_interval: Controller execution period in seconds.
             initial_phase: Optional initial phase constant. Defaults to
@@ -1787,6 +1792,8 @@ class RocketController(Controller):
         self.target_ascent_pitch = (
             None if target_ascent_pitch is None else float(target_ascent_pitch)
         )
+        self.steer_kp = float(steer_kp)
+        self.steer_kd = float(steer_kd)
         self.separation_delay = float(separation_delay)
         self.phase = phase
         self.phase_start_time = None
@@ -1796,6 +1803,126 @@ class RocketController(Controller):
             raise ValueError(f"phase must be one of {sorted(self.VALID_PHASES)}")
         self.phase = phase
         self.phase_start_time = float(t)
+
+    def _phase_elapsed(self, t):
+        if self.phase_start_time is None:
+            return 0.0
+        return max(float(t) - self.phase_start_time, 0.0)
+
+    def _local_enu_basis(self, position):
+        position = np.asarray(position, dtype=float)
+        position_norm = np.linalg.norm(position)
+        if position.shape != (3,) or position_norm < 1e-8:
+            return np.array([0.0, 1.0, 0.0]), np.array([0.0, 0.0, 1.0]), np.array([1.0, 0.0, 0.0])
+
+        lat_deg, lon_deg, _ = ecef_to_lla(position[0], position[1], position[2])
+        lat = np.radians(lat_deg)
+        lon = np.radians(lon_deg)
+        east = np.array([-np.sin(lon), np.cos(lon), 0.0])
+        north = np.array([
+            -np.sin(lat) * np.cos(lon),
+            -np.sin(lat) * np.sin(lon),
+            np.cos(lat),
+        ])
+        up = position / position_norm
+        return east, north, up
+
+    def _current_horizontal_direction(self, mover, east, north, up):
+        forward_horizontal = mover.forward_axis - np.dot(mover.forward_axis, up) * up
+        horizontal_norm = np.linalg.norm(forward_horizontal)
+        if horizontal_norm > 1e-8:
+            return forward_horizontal / horizontal_norm
+        return east
+
+    def _resolve_launch_azimuth(self, mover):
+        if self.launch_azimuth is not None:
+            return self.launch_azimuth
+
+        east, north, up = self._local_enu_basis(mover.position)
+        if self.target_position is not None:
+            rel = self.target_position - mover.position
+            rel_horizontal = rel - np.dot(rel, up) * up
+            rel_horizontal_norm = np.linalg.norm(rel_horizontal)
+            if rel_horizontal_norm > 1e-8:
+                east_component = np.dot(rel_horizontal, east)
+                north_component = np.dot(rel_horizontal, north)
+                return np.arctan2(east_component, north_component)
+
+        current_horizontal = self._current_horizontal_direction(mover, east, north, up)
+        return np.arctan2(np.dot(current_horizontal, east), np.dot(current_horizontal, north))
+
+    def _horizontal_direction_from_azimuth(self, east, north, azimuth):
+        horizontal_direction = np.cos(azimuth) * north + np.sin(azimuth) * east
+        horizontal_norm = np.linalg.norm(horizontal_direction)
+        if horizontal_norm < 1e-8:
+            return north
+        return horizontal_direction / horizontal_norm
+
+    def _resolve_target_ascent_pitch(self):
+        if self.target_ascent_pitch is None:
+            return np.radians(45.0)
+        return np.clip(self.target_ascent_pitch, -0.5 * np.pi, 0.5 * np.pi)
+
+    def _forward_direction_from_pitch(self, horizontal_direction, up, pitch):
+        pitch = np.clip(pitch, -0.5 * np.pi, 0.5 * np.pi)
+        forward_direction = np.cos(pitch) * horizontal_direction + np.sin(pitch) * up
+        forward_norm = np.linalg.norm(forward_direction)
+        if forward_norm < 1e-8:
+            return up
+        return forward_direction / forward_norm
+
+    def _advance_guidance_phase(self, t):
+        if self.phase == self.BOOST_VERTICAL and self._phase_elapsed(t) >= self.vertical_rise_time:
+            next_phase = self.PITCH_OVER if self.pitch_over_duration > 0.0 else self.POWERED_ASCENT
+            self._enter_phase(next_phase, t)
+
+        if self.phase == self.PITCH_OVER and self._phase_elapsed(t) >= self.pitch_over_duration:
+            self._enter_phase(self.POWERED_ASCENT, t)
+
+    def _desired_forward_direction(self, t, mover):
+        east, north, up = self._local_enu_basis(mover.position)
+        if self.phase == self.BOOST_VERTICAL:
+            return up
+        if self.phase not in (self.PITCH_OVER, self.POWERED_ASCENT):
+            return None
+
+        azimuth = self._resolve_launch_azimuth(mover)
+        horizontal_direction = self._horizontal_direction_from_azimuth(east, north, azimuth)
+        target_ascent_pitch = self._resolve_target_ascent_pitch()
+        if self.phase == self.PITCH_OVER:
+            duration = max(self.pitch_over_duration, 1e-9)
+            pitch_progress = np.clip(self._phase_elapsed(t) / duration, 0.0, 1.0)
+            pitch = (1.0 - pitch_progress) * (0.5 * np.pi) + pitch_progress * target_ascent_pitch
+        else:
+            pitch = target_ascent_pitch
+        return self._forward_direction_from_pitch(horizontal_direction, up, pitch)
+
+    def _apply_pointing_guidance(self, mover, desired_forward):
+        if desired_forward is None:
+            mover.steer_cmd = 0.0
+            return
+
+        current_forward = mover.forward_axis
+        current_forward = current_forward / max(np.linalg.norm(current_forward), 1e-8)
+        desired_forward = np.asarray(desired_forward, dtype=float)
+        desired_forward = desired_forward / max(np.linalg.norm(desired_forward), 1e-8)
+
+        error_axis_world = np.cross(current_forward, desired_forward)
+        error_axis_body = mover.orientation.T @ error_axis_world
+        error_axis_body[0] = 0.0
+
+        transverse_body_rates = np.asarray(mover.omega_body, dtype=float).copy()
+        transverse_body_rates[0] = 0.0
+        steering_command_body = self.steer_kp * error_axis_body - self.steer_kd * transverse_body_rates
+        steering_command_body[0] = 0.0
+
+        steering_magnitude = np.linalg.norm(steering_command_body)
+        if steering_magnitude < 1e-8:
+            mover.steer_cmd = 0.0
+            return
+
+        mover.steer_direction_body = steering_command_body
+        mover.steer_cmd = 100.0 * steering_magnitude
 
     def initialize(self, engine):
         super().initialize(engine)
@@ -1817,14 +1944,17 @@ class RocketController(Controller):
         if self.phase_start_time is None:
             self.phase_start_time = float(t)
 
+        self._advance_guidance_phase(t)
+
         if self.phase in (self.STAGE_SEPARATION, self.BALLISTIC_COAST, self.IMPACT):
             mover.thrust_cmd = 0.0
             mover.steer_cmd = 0.0
             return
 
         if self.phase in (self.BOOST_VERTICAL, self.PITCH_OVER, self.POWERED_ASCENT):
-            mover.thrust_cmd = 0.0
-            mover.steer_cmd = 0.0
+            mover.thrust_cmd = 100.0
+            desired_forward = self._desired_forward_direction(t, mover)
+            self._apply_pointing_guidance(mover, desired_forward)
             return
 
         raise RuntimeError(f"unhandled rocket-controller phase: {self.phase}")
