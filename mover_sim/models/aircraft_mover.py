@@ -1812,6 +1812,9 @@ class RocketController(Controller):
 
         self.phase = phase
         self.phase_start_time = None
+        self._published_burnout_stage_indices = set()
+        self._published_separation_stage_indices = set()
+        self._ballistic_coast_published = False
 
     def _coerce_optional_vector3(self, value, name):
         if value is None:
@@ -1949,6 +1952,25 @@ class RocketController(Controller):
     def _powered_flight_phase(self):
         return self.phase in (self.BOOST_VERTICAL, self.PITCH_OVER, self.POWERED_ASCENT)
 
+    def _publish_stage_burnout(self, engine, mover):
+        stage_index = mover.active_stage_index
+        if stage_index in self._published_burnout_stage_indices:
+            return
+        engine.broker.publish("stage_burnout", self.platform, stage_index)
+        self._published_burnout_stage_indices.add(stage_index)
+
+    def _publish_stage_separation(self, engine, stage_index):
+        if stage_index in self._published_separation_stage_indices:
+            return
+        engine.broker.publish("stage_separation", self.platform, stage_index)
+        self._published_separation_stage_indices.add(stage_index)
+
+    def _publish_ballistic_coast_start(self, engine):
+        if self._ballistic_coast_published:
+            return
+        engine.broker.publish("ballistic_coast_start", self.platform)
+        self._ballistic_coast_published = True
+
     def _burnout_detected(self, mover):
         if not mover.stages:
             return False
@@ -1962,12 +1984,14 @@ class RocketController(Controller):
             return float(stage["mass_flow_rate"]) <= 0.0
         return (stage["propellant_mass"] / stage["burn_duration"]) <= 0.0
 
-    def _begin_post_burnout_phase(self, mover, t):
+    def _begin_post_burnout_phase(self, engine, mover, t):
         mover.thrust_cmd = 0.0
         mover.steer_cmd = 0.0
+        self._publish_stage_burnout(engine, mover)
         if mover.can_separate_stage():
             self._enter_phase(self.STAGE_SEPARATION, t)
             return
+        self._publish_ballistic_coast_start(engine)
         self._enter_phase(self.BALLISTIC_COAST, t)
 
     def _update_stage_separation(self, t, engine, mover):
@@ -1977,10 +2001,13 @@ class RocketController(Controller):
             return
 
         if mover.can_separate_stage():
+            separated_stage_index = mover.active_stage_index
             mover.advance_to_next_stage(engine)
+            self._publish_stage_separation(engine, separated_stage_index)
             self._enter_phase(self.POWERED_ASCENT, t)
             return
 
+        self._publish_ballistic_coast_start(engine)
         self._enter_phase(self.BALLISTIC_COAST, t)
 
     def _apply_pointing_guidance(self, mover, desired_forward):
@@ -2036,7 +2063,7 @@ class RocketController(Controller):
         self._advance_guidance_phase(t)
 
         if self._powered_flight_phase() and self._burnout_detected(mover):
-            self._begin_post_burnout_phase(mover, t)
+            self._begin_post_burnout_phase(engine, mover, t)
             return
 
         if self.phase in (self.STAGE_SEPARATION, self.BALLISTIC_COAST, self.IMPACT):
