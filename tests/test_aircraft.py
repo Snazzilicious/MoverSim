@@ -12,6 +12,7 @@ from mover_sim.models.aircraft_mover import (
     AircraftAutopilot,
     FixedWingAutopilot,
     FixedWingMover,
+    RocketController,
     RocketMover,
 )
 from mover_sim.math.coordinates import lla_to_ecef, ecef_to_enu, ecef_to_lla
@@ -1198,6 +1199,39 @@ def test_rocket_mover_constructor_stores_expected_state_layout():
     assert np.isclose(mover.area, 1.8)
     assert np.isclose(mover.cd0, 0.14)
     assert np.isclose(mover.current_total_mass(), 2300.0)
+
+
+def test_rocket_controller_defaults_to_boost_vertical_phase():
+    controller = RocketController()
+
+    assert controller.phase == RocketController.BOOST_VERTICAL
+    assert controller.phase_start_time is None
+
+
+def test_rocket_controller_rejects_invalid_initial_phase():
+    with pytest.raises(ValueError, match="initial_phase"):
+        RocketController(initial_phase="invalid")
+
+
+def test_rocket_controller_initialize_and_update_hold_safe_zero_commands():
+    engine = SimulationEngine()
+
+    pos = lla_to_ecef(0.0, 0.0, 1500.0)
+    vel = np.array([0.0, 0.0, 0.0])
+    mover = RocketMover(pos, vel, use_coriolis=False)
+    controller = RocketController(update_interval=0.1)
+    platform = Platform("rocket_controller", mover, controller)
+    engine.register_platform(platform)
+
+    controller.initialize(engine)
+    assert controller.phase_start_time == engine.t
+
+    mover.thrust_cmd = 65.0
+    mover.steer_cmd = 40.0
+    controller.update(engine.t, engine)
+
+    assert mover.thrust_cmd == 0.0
+    assert mover.steer_cmd == 0.0
 
 
 def test_rocket_orientation_correction_event_projects_committed_state():
