@@ -84,10 +84,8 @@ def _validate_stage_definitions(stages):
             if field not in stage:
                 raise ValueError(f"stages[{index}] is missing required field '{field}'")
 
-        if "thrust" not in stage and "thrust_profile" not in stage:
-            raise ValueError(
-                f"stages[{index}] must define either 'thrust' or 'thrust_profile'"
-            )
+        if "thrust" not in stage:
+            raise ValueError(f"stages[{index}] must define 'thrust'")
 
         validated_stage = dict(stage)
         for field in REQUIRED_STAGE_FIELDS:
@@ -96,13 +94,10 @@ def _validate_stage_definitions(stages):
                 validated_stage[field],
             )
 
-        if "thrust" in validated_stage:
-            validated_stage["thrust"] = _validate_positive_scalar(
-                f"stages[{index}].thrust",
-                validated_stage["thrust"],
-            )
-        if "thrust_profile" in validated_stage and not validated_stage["thrust_profile"]:
-            raise ValueError(f"stages[{index}].thrust_profile must not be empty")
+        validated_stage["thrust"] = _validate_positive_scalar(
+            f"stages[{index}].thrust",
+            validated_stage["thrust"],
+        )
 
         validated.append(validated_stage)
 
@@ -342,25 +337,11 @@ class BallisticMissileMover(Aircraft6DOFMover):
         self.mass = self.current_dry_mass + self.current_propellant_mass
 
     def current_stage_thrust(self, t):
+        del t
         stage = self._active_stage()
         if stage is None or self.current_propellant_mass <= 0.0:
             return 0.0
-        if "thrust" in stage:
-            return float(stage["thrust"])
-
-        thrust_profile = stage.get("thrust_profile", [])
-        if not thrust_profile:
-            return 0.0
-
-        for entry in thrust_profile:
-            if isinstance(entry, dict) and entry.get("time") is not None and entry.get("thrust") is not None:
-                if t <= float(entry["time"]):
-                    return float(entry["thrust"])
-
-        last_entry = thrust_profile[-1]
-        if isinstance(last_entry, dict) and last_entry.get("thrust") is not None:
-            return float(last_entry["thrust"])
-        return 0.0
+        return float(stage["thrust"])
 
     def compute_state_derivative(self, t, state):
         pos = state[self.get_position_slice()]
