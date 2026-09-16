@@ -10,6 +10,7 @@ from mover_sim.models.aircraft_mover import (
     Aircraft6DOFMover,
     AircraftMover,
     AircraftAutopilot,
+    ExpendedStageMover,
     FixedWingAutopilot,
     FixedWingMover,
     RocketController,
@@ -17,6 +18,7 @@ from mover_sim.models.aircraft_mover import (
 )
 from mover_sim.math.coordinates import lla_to_ecef, ecef_to_enu, ecef_to_lla
 from mover_sim.math.orientation import rotate_vector_by_quaternion
+from mover_sim.math.physics import gravity
 
 
 def _rotation_about_body_right(angle_rad):
@@ -1199,6 +1201,84 @@ def test_rocket_mover_constructor_stores_expected_state_layout():
     assert np.isclose(mover.area, 1.8)
     assert np.isclose(mover.cd0, 0.14)
     assert np.isclose(mover.current_total_mass(), 2300.0)
+
+
+def test_expended_stage_mover_initializes_as_passive_rocket_body():
+    pos = lla_to_ecef(0.0, 0.0, 1500.0)
+    vel = np.array([0.0, 220.0, 15.0])
+
+    mover = ExpendedStageMover(pos, vel, use_coriolis=False)
+
+    assert mover.get_state_dimension() == 19
+    assert mover.get_state().shape == (19,)
+    assert mover.orientation.shape == (3, 3)
+    assert mover.omega_body.shape == (3,)
+    assert np.isclose(mover.propellant_mass, 0.0)
+    assert mover.stages == []
+    assert mover.active_stage_index == 0
+    assert np.isclose(mover.max_thrust, 0.0)
+    assert np.isclose(mover.max_steering_moment, 0.0)
+    assert np.isclose(mover.current_total_mass(), mover.payload_mass)
+    assert mover.has_active_burn() is False
+    assert mover.can_separate_stage() is False
+
+
+def test_expended_stage_mover_has_zero_thrust_and_mass_flow_even_with_full_command():
+    pos = lla_to_ecef(0.0, 0.0, 1500.0)
+    vel = np.array([0.0, 180.0, 0.0])
+    mover = ExpendedStageMover(pos, vel, use_coriolis=False)
+
+    mover.thrust_cmd = 100.0
+    mover.steer_cmd = 100.0
+
+    assert mover.current_stage_thrust(0.0) == 0.0
+    assert mover.current_mass_flow_rate(0.0) == 0.0
+    assert mover.has_active_burn() is False
+    assert mover.can_separate_stage() is False
+
+
+def test_expended_stage_mover_derivative_is_passive_aero_without_thrust():
+    pos = lla_to_ecef(0.0, 0.0, 2500.0)
+    vel = np.array([160.0, 40.0, -25.0])
+    orientation = _rotation_about_body_up(np.radians(20.0))
+    omega_body = np.array([0.15, -0.08, 0.04])
+    mover = ExpendedStageMover(
+        pos,
+        vel,
+        initial_orientation=orientation,
+        initial_body_rates=omega_body,
+        mass=750.0,
+        rotational_mass=np.diag([1400.0, 3200.0, 2800.0]),
+        area=1.4,
+        cd0=0.12,
+        normal_force_coefficient=1.8,
+        alignment_restoring_coefficient=0.7,
+        angular_damping=np.array([180.0, 260.0, 220.0]),
+        use_coriolis=False,
+    )
+    mover.thrust_cmd = 100.0
+    mover.steer_cmd = 100.0
+
+    state = mover.get_initial_state().copy()
+    derivative = mover.compute_state_derivative(0.0, state)
+    derivative_dvel = derivative[mover.get_velocity_slice()]
+    derivative_domega = derivative[mover.get_omega_slice()]
+    derivative_dprop = derivative[mover.get_propellant_mass_slice()]
+
+    expected_dvel = gravity(pos) + (
+        mover._drag_force_world(pos, vel)
+        + mover._normal_aero_force_world(pos, vel, orientation)
+        + mover._thrust_force_world(orientation, 0.0)
+    ) / mover.current_total_mass()
+
+    assert mover.current_stage_thrust(0.0) == 0.0
+    assert mover.current_mass_flow_rate(0.0) == 0.0
+    assert np.allclose(derivative_dvel, expected_dvel)
+    assert np.allclose(
+        derivative_domega,
+        mover._angular_acceleration_body(pos, vel, orientation, omega_body),
+    )
+    assert np.allclose(derivative_dprop, [0.0])
 
 
 def test_rocket_controller_defaults_to_boost_vertical_phase():

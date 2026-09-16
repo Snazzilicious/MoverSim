@@ -1725,6 +1725,61 @@ class RocketMover(TranslationalMover, IntegratedMover):
         return np.concatenate([dpos, dvel, dorientation.reshape(-1), domega, dpropellant_mass])
 
 
+class ExpendedStageMover(RocketMover):
+    """Passive separated stage modeled with the rigid-body rocket aerodynamics."""
+
+    DEFAULT_MASS = 2000.0
+    DEFAULT_AREA = 2.5
+    DEFAULT_CD0 = 0.15
+    DEFAULT_ROTATIONAL_MASS = np.diag([3000.0, 18000.0, 18000.0])
+    DEFAULT_ANGULAR_DAMPING = np.array([1.0e4, 3.0e4, 3.0e4])
+    DEFAULT_NORMAL_FORCE_COEFFICIENT = 2.5
+    DEFAULT_ALIGNMENT_RESTORING_COEFFICIENT = 0.0
+
+    def __init__(
+        self,
+        initial_position,
+        initial_velocity,
+        initial_orientation=None,
+        initial_body_rates=None,
+        mass=DEFAULT_MASS,
+        rotational_mass=None,
+        area=DEFAULT_AREA,
+        cd0=DEFAULT_CD0,
+        normal_force_coefficient=DEFAULT_NORMAL_FORCE_COEFFICIENT,
+        alignment_restoring_coefficient=DEFAULT_ALIGNMENT_RESTORING_COEFFICIENT,
+        angular_damping=None,
+        use_coriolis=True,
+    ):
+        if rotational_mass is None:
+            rotational_mass = self.DEFAULT_ROTATIONAL_MASS.copy()
+        if angular_damping is None:
+            angular_damping = self.DEFAULT_ANGULAR_DAMPING.copy()
+
+        super().__init__(
+            initial_position=initial_position,
+            initial_velocity=initial_velocity,
+            initial_orientation=initial_orientation,
+            initial_body_rates=initial_body_rates,
+            stages=None,
+            mass=mass,
+            propellant_mass=0.0,
+            rotational_mass=rotational_mass,
+            area=area,
+            cd0=cd0,
+            normal_force_coefficient=normal_force_coefficient,
+            alignment_restoring_coefficient=alignment_restoring_coefficient,
+            max_thrust=0.0,
+            max_steering_moment=0.0,
+            angular_damping=angular_damping,
+            use_coriolis=use_coriolis,
+        )
+
+        self.thrust_cmd = 0.0
+        self.steer_cmd = 0.0
+        self.steer_direction_body = np.array([0.0, 1.0, 0.0])
+
+
 class RocketController(Controller):
     """Simple phase-based controller for `RocketMover` ballistic missions."""
 

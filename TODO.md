@@ -1,20 +1,16 @@
 
-* Rocket guidance
-    * resume from step 8
-
 ### Grand TODO
 
 * Redesign Aircraft movers
-    * Rocket guidance
-        * Waypoints or whatever - need to investigate this
-        * Trigger stage separation
-    * Ballistic mover
-        * for expended stages
+    * Rewrite scenarios
+        * re-spec these
+        * merge scenario and example run
+        * Keep the signature, but replace everything else
+        * don't de-spawn yet
     * Remove old aircraft mover(s)
         * Aircraft6DOFMover, Aircraft6DOFAutopilot
         * Update AircraftSplineMover to use fru instead of quaternions 
         * Rewrite scenarios
-        * remove unused imports
     * Remove quaternions everywhere
         * redesign AircraftSplineMover
     * Update logging
@@ -22,7 +18,7 @@
             * change orientation from quaternions to fru
             * remove body rates
     * Update plotting
-    * Update example scenarios
+    * remove unused imports and other dead code
     * Revisit FixedWingMover
         * add helpers and properties and setters like RocketMover has
         * update Autopilot to use them
