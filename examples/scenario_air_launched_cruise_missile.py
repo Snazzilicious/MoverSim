@@ -183,6 +183,8 @@ class AirLaunchedCruiseMissileMothershipController(FixedWingAutopilot):
         if self.rtb_position_ecef is None:
             return self._desired_cruise_horizontal_direction(mover)
 
+        # Steer toward the RTB destination using the current local horizontal plane so
+        # guidance remains well-defined even as the mothership moves over the Earth.
         local_up = mover.position / max(np.linalg.norm(mover.position), 1e-6)
         rel = self.rtb_position_ecef - mover.position
         rel_horizontal = rel - np.dot(rel, local_up) * local_up
@@ -192,6 +194,8 @@ class AirLaunchedCruiseMissileMothershipController(FixedWingAutopilot):
         return rel_horizontal / rel_horizontal_norm
 
     def _target_altitude(self):
+        # During RTB, use the destination altitude so the mothership converges to the
+        # return point rather than holding its original cruise altitude indefinitely.
         if self.mode == self.RTB_MODE and self.rtb_position_ecef is not None:
             return ecef_to_lla(
                 self.rtb_position_ecef[0],
@@ -204,9 +208,16 @@ class AirLaunchedCruiseMissileMothershipController(FixedWingAutopilot):
         if rtb_position_ecef is not None:
             self.rtb_position_ecef = self._coerce_optional_vector3(rtb_position_ecef, "rtb_position_ecef")
         self.mode = self.RTB_MODE
+        # Clear any cached hold targets from cruise mode so the next update rebuilds the
+        # hold state entirely from the RTB destination.
+        self.hold_speed = None
+        self.hold_altitude = None
+        self.hold_horizontal_direction = None
         self.hold_active = False
 
     def _enter_hold_mode(self, mover):
+        # Reuse the base class empty-route hold path, but seed it from the active mission
+        # mode so cruise and RTB both flow through the same update mechanism.
         self.hold_active = True
         self.hold_speed = self.cruise_speed
         self.hold_altitude = self._target_altitude()
