@@ -79,23 +79,59 @@ class SurfaceLaunchedCruiseMissileMover(FixedWingMover):
 
 class SurfaceLaunchedCruiseMissileController(FixedWingAutopilot):
 
-    def __init__( self, ..., guidance_delay ):
+    BOOST_PHASE = "boost"
+    CRUISE_PHASE = "cruise"
+
+    def __init__(
+        self,
+        cruise_speed,
+        cruise_altitude,
+        cruise_heading,
+        boost_duration,
+        launch_pitch_angle,
+        update_interval=0.1,
+    ):
+        super().__init__(
+            waypoints=[],
+            target_speed=cruise_speed,
+            update_interval=update_interval,
+        )
+        self.cruise_speed = float(cruise_speed)
+        self.cruise_altitude = float(cruise_altitude)
+        self.cruise_heading = float(cruise_heading)
+        self.boost_duration = float(boost_duration)
+        self.launch_pitch_angle = float(launch_pitch_angle)
+        self.phase = self.BOOST_PHASE
         self.t_launch = None
+        self._boost_start_published = False
+        self._boost_end_published = False
 
     def initialize(self, engine):
-        self.t_launch = engine.t # save time of launch to begin delay timer
+        self.t_launch = engine.t
+        self.phase = self.BOOST_PHASE
+        self.platform.mover.boost_active = True
         super().initialize(engine)
         if not self._boost_start_published:
             engine.broker.publish("boost_start", self.platform)
             self._boost_start_published = True
 
     def update( self, t, engine ):
-        if t - self.t_launch < self.guidance_delay:
+        if self.t_launch is None:
+            self.t_launch = t
+
+        if self.phase == self.BOOST_PHASE and t - self.t_launch < self.boost_duration:
+            self.platform.mover.boost_active = True
             return
-        self.platform.mover.boost_active = False
-        if not self._boost_end_published:
-            engine.broker.publish("boost_end", self.platform)
-            self._boost_end_published = True
+
+        if self.phase == self.BOOST_PHASE:
+            self.platform.mover.boost_active = False
+            self.phase = self.CRUISE_PHASE
+            if not self._boost_end_published:
+                engine.broker.publish("boost_end", self.platform)
+                self._boost_end_published = True
+
+        if self.phase != self.CRUISE_PHASE:
+            return
         
         super().update( t, engine )
     
@@ -170,7 +206,6 @@ def run_surface_launched_cruise_missile_scenario(
         cruise_altitude=cruise_altitude,
         cruise_heading=cruise_heading,
         boost_duration=boost_duration,
-        boost_acceleration=boost_acceleration,
         launch_pitch_angle=launch_pitch_angle,
     )
     platform = Platform("surface_cruise_missile", mover, controller)
