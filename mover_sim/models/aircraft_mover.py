@@ -1672,7 +1672,10 @@ class RocketMover(TranslationalMover, IntegratedMover):
     def can_separate_stage(self, propellant_mass=None):
         if propellant_mass is None:
             propellant_mass = self.propellant_mass
-        propellant_mass = self._validate_nonnegative_scalar(propellant_mass, "propellant_mass")
+        propellant_mass = float(propellant_mass)
+        if not np.isfinite(propellant_mass):
+            raise ValueError("propellant_mass must be finite")
+        propellant_mass = max(propellant_mass, 0.0)
         if not self.stages:
             return False
         if self.active_stage_index + 1 >= len(self.stages):

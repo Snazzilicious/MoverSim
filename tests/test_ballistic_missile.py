@@ -182,14 +182,14 @@ def test_ballistic_one_stage_scenario_runs_with_rocket_wrapper(tmp_path):
     output_path = tmp_path / "ballistic_one_stage.h5"
     with h5py.File(output_path, "w") as h5:
         result = run_ballistic_missile_scenario(
-            initial_position_ecef=lla_to_ecef(37.0, -122.0, 0.0),
+            initial_position_ecef=lla_to_ecef(37.0, -122.0, 5000.0),
             target_position_ecef=lla_to_ecef(37.2, -121.8, 0.0),
             peak_altitude=20_000.0,
             stages=[_rocket_stage(
                 dry_mass=1000.0,
                 propellant_mass=500.0,
                 burn_duration=0.2,
-                thrust=10000.0,
+                thrust=50000.0,
                 drag_coefficient=0.1,
                 reference_area=1.0,
                 separation_delay=0.1,
@@ -215,7 +215,7 @@ def test_ballistic_two_stage_scenario_logs_active_and_spent_stage_trajectories_a
     output_path = tmp_path / "ballistic_two_stage.h5"
     with h5py.File(output_path, "w") as h5:
         run_ballistic_missile_scenario(
-            initial_position_ecef=lla_to_ecef(37.0, -122.0, 0.0),
+            initial_position_ecef=lla_to_ecef(37.0, -122.0, 5000.0),
             target_position_ecef=lla_to_ecef(37.5, -121.5, 0.0),
             peak_altitude=40_000.0,
             stages=[
@@ -223,7 +223,7 @@ def test_ballistic_two_stage_scenario_logs_active_and_spent_stage_trajectories_a
                     dry_mass=1000.0,
                     propellant_mass=500.0,
                     burn_duration=0.2,
-                    thrust=10000.0,
+                    thrust=100000.0,
                     drag_coefficient=0.1,
                     reference_area=1.0,
                     separation_delay=0.1,
@@ -232,7 +232,7 @@ def test_ballistic_two_stage_scenario_logs_active_and_spent_stage_trajectories_a
                     dry_mass=500.0,
                     propellant_mass=250.0,
                     burn_duration=0.2,
-                    thrust=8000.0,
+                    thrust=80000.0,
                     drag_coefficient=0.08,
                     reference_area=0.8,
                     separation_delay=0.1,
@@ -273,14 +273,14 @@ def test_ballistic_hdf5_event_table_contains_configured_topics_only(tmp_path):
     output_path = tmp_path / "ballistic_events.h5"
     with h5py.File(output_path, "w") as h5:
         run_ballistic_missile_scenario(
-            initial_position_ecef=lla_to_ecef(37.0, -122.0, 0.0),
+            initial_position_ecef=lla_to_ecef(37.0, -122.0, 5000.0),
             target_position_ecef=lla_to_ecef(37.2, -121.8, 0.0),
             peak_altitude=20_000.0,
             stages=[_rocket_stage(
                 dry_mass=1000.0,
                 propellant_mass=500.0,
                 burn_duration=0.2,
-                thrust=10000.0,
+                thrust=50000.0,
                 drag_coefficient=0.1,
                 reference_area=1.0,
                 separation_delay=0.1,
@@ -303,14 +303,14 @@ def test_ballistic_hdf5_event_table_contains_configured_topics_only(tmp_path):
 def test_ballistic_rejects_non_group_output_target():
     try:
         run_ballistic_missile_scenario(
-            initial_position_ecef=lla_to_ecef(37.0, -122.0, 0.0),
+            initial_position_ecef=lla_to_ecef(37.0, -122.0, 5000.0),
             target_position_ecef=lla_to_ecef(37.2, -121.8, 0.0),
             peak_altitude=20_000.0,
             stages=[_rocket_stage(
                 dry_mass=1000.0,
                 propellant_mass=500.0,
                 burn_duration=0.2,
-                thrust=10000.0,
+                thrust=50000.0,
                 drag_coefficient=0.1,
                 reference_area=1.0,
                 separation_delay=0.1,
@@ -330,14 +330,14 @@ def test_ballistic_rejects_reused_group(tmp_path):
     with h5py.File(output_path, "w") as h5:
         group = h5.create_group("run")
         run_ballistic_missile_scenario(
-            initial_position_ecef=lla_to_ecef(37.0, -122.0, 0.0),
+            initial_position_ecef=lla_to_ecef(37.0, -122.0, 5000.0),
             target_position_ecef=lla_to_ecef(37.2, -121.8, 0.0),
             peak_altitude=20_000.0,
             stages=[_rocket_stage(
                 dry_mass=1000.0,
                 propellant_mass=500.0,
                 burn_duration=0.2,
-                thrust=10000.0,
+                thrust=50000.0,
                 drag_coefficient=0.1,
                 reference_area=1.0,
                 separation_delay=0.1,
@@ -349,14 +349,14 @@ def test_ballistic_rejects_reused_group(tmp_path):
 
         try:
             run_ballistic_missile_scenario(
-                initial_position_ecef=lla_to_ecef(37.0, -122.0, 0.0),
+                initial_position_ecef=lla_to_ecef(37.0, -122.0, 5000.0),
                 target_position_ecef=lla_to_ecef(37.2, -121.8, 0.0),
                 peak_altitude=20_000.0,
                 stages=[_rocket_stage(
                     dry_mass=1000.0,
                     propellant_mass=500.0,
                     burn_duration=0.2,
-                    thrust=10000.0,
+                    thrust=50000.0,
                     drag_coefficient=0.1,
                     reference_area=1.0,
                     separation_delay=0.1,
@@ -375,14 +375,14 @@ def test_ballistic_supports_sibling_groups_in_one_file(tmp_path):
     output_path = tmp_path / "ballistic_siblings.h5"
     with h5py.File(output_path, "w") as h5:
         run_ballistic_missile_scenario(
-            initial_position_ecef=lla_to_ecef(37.0, -122.0, 0.0),
+            initial_position_ecef=lla_to_ecef(37.0, -122.0, 5000.0),
             target_position_ecef=lla_to_ecef(37.2, -121.8, 0.0),
             peak_altitude=20_000.0,
             stages=[_rocket_stage(
                 dry_mass=1000.0,
                 propellant_mass=500.0,
                 burn_duration=0.2,
-                thrust=10000.0,
+                thrust=50000.0,
                 drag_coefficient=0.1,
                 reference_area=1.0,
                 separation_delay=0.1,
@@ -392,14 +392,14 @@ def test_ballistic_supports_sibling_groups_in_one_file(tmp_path):
             output_group=h5.create_group("run_a"),
         )
         run_ballistic_missile_scenario(
-            initial_position_ecef=lla_to_ecef(37.0, -122.0, 0.0),
+            initial_position_ecef=lla_to_ecef(37.0, -122.0, 5000.0),
             target_position_ecef=lla_to_ecef(37.2, -121.8, 0.0),
             peak_altitude=20_000.0,
             stages=[_rocket_stage(
                 dry_mass=1000.0,
                 propellant_mass=500.0,
                 burn_duration=0.2,
-                thrust=10000.0,
+                thrust=50000.0,
                 drag_coefficient=0.1,
                 reference_area=1.0,
                 separation_delay=0.1,
