@@ -3,10 +3,15 @@ import sys
 from pathlib import Path
 
 import h5py
+import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from mover_sim.core.engine import SimulationEngine
+from mover_sim.core.observer import HDF5Logger
+from mover_sim.core.platform import Platform
 from mover_sim.math.coordinates import lla_to_ecef
+from mover_sim.models.aircraft_mover import FixedWingAutopilot, FixedWingMover
 
 
 class SurfaceLaunchedCruiseMissileMover(FixedWingMover):
