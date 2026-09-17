@@ -10,7 +10,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from mover_sim.core.engine import SimulationEngine
 from mover_sim.core.observer import HDF5Logger
 from mover_sim.core.platform import Platform
-from mover_sim.math.coordinates import lla_to_ecef
+from mover_sim.math.coordinates import ecef_to_lla, lla_to_ecef
+from mover_sim.math.orientation import build_aircraft_body_axes, project_to_rotation_matrix
 from mover_sim.models.aircraft_mover import RocketController, RocketMover
 
 SCENARIO_EVENT_TOPICS = [
@@ -23,6 +24,91 @@ SCENARIO_EVENT_TOPICS = [
     "spent_stage_ground_impact",
     "active_body_ground_impact",
 ]
+
+
+def _local_enu_basis(position_ecef):
+    position = np.asarray(position_ecef, dtype=float)
+    if position.shape != (3,):
+        raise ValueError("position_ecef must have shape (3,)")
+
+    lat_deg, lon_deg, _ = ecef_to_lla(position[0], position[1], position[2])
+    lat = np.radians(lat_deg)
+    lon = np.radians(lon_deg)
+    east = np.array([-np.sin(lon), np.cos(lon), 0.0])
+    north = np.array([
+        -np.sin(lat) * np.cos(lon),
+        -np.sin(lat) * np.sin(lon),
+        np.cos(lat),
+    ])
+    up = position / max(np.linalg.norm(position), 1e-6)
+    return east, north, up
+
+
+def _derive_ascent_azimuth(initial_position_ecef, target_position_ecef):
+    initial_position = np.asarray(initial_position_ecef, dtype=float)
+    target_position = np.asarray(target_position_ecef, dtype=float)
+    east, north, up = _local_enu_basis(initial_position)
+
+    rel = target_position - initial_position
+    rel_horizontal = rel - np.dot(rel, up) * up
+    east_component = np.dot(rel_horizontal, east)
+    north_component = np.dot(rel_horizontal, north)
+    return np.arctan2(east_component, north_component)
+
+
+def _orientation_from_ascent_azimuth(position_ecef, ascent_azimuth, ascent_pitch):
+    east, north, up = _local_enu_basis(position_ecef)
+    forward_horizontal = np.cos(ascent_azimuth) * north + np.sin(ascent_azimuth) * east
+    forward = np.cos(ascent_pitch) * forward_horizontal + np.sin(ascent_pitch) * up
+    forward_axis, right_axis, up_axis = build_aircraft_body_axes(forward, up)
+    return project_to_rotation_matrix(np.column_stack([forward_axis, right_axis, up_axis]))
+
+
+def _derive_rocket_controller_kwargs(
+    initial_position_ecef,
+    target_position_ecef,
+    peak_altitude,
+    stages,
+):
+    """Derive `RocketController` kwargs heuristically from mission-level inputs."""
+    initial_position = np.asarray(initial_position_ecef, dtype=float)
+    target_position = np.asarray(target_position_ecef, dtype=float)
+    peak_altitude = float(peak_altitude)
+    if peak_altitude <= 0.0:
+        raise ValueError("peak_altitude must be greater than 0")
+
+    _, _, initial_altitude = ecef_to_lla(
+        initial_position[0],
+        initial_position[1],
+        initial_position[2],
+    )
+    altitude_gain = max(peak_altitude - initial_altitude, 1.0)
+
+    if altitude_gain < 10_000.0:
+        target_ascent_pitch = np.radians(55.0)
+        vertical_rise_time = 1.0
+        pitch_over_duration = 2.0
+    elif altitude_gain < 50_000.0:
+        target_ascent_pitch = np.radians(70.0)
+        vertical_rise_time = 2.0
+        pitch_over_duration = 4.0
+    else:
+        target_ascent_pitch = np.radians(82.0)
+        vertical_rise_time = 3.0
+        pitch_over_duration = 6.0
+
+    separation_delay = 0.0
+    if stages:
+        separation_delay = float(stages[0].get("separation_delay", 0.0))
+
+    return {
+        "target_position_ecef": target_position,
+        "launch_azimuth": _derive_ascent_azimuth(initial_position, target_position),
+        "vertical_rise_time": vertical_rise_time,
+        "pitch_over_duration": pitch_over_duration,
+        "target_ascent_pitch": target_ascent_pitch,
+        "separation_delay": separation_delay,
+    }
 
 
 def run_ballistic_missile_scenario(
@@ -39,7 +125,7 @@ def run_ballistic_missile_scenario(
     Args:
         initial_position_ecef: Initial ballistic-missile ECEF position vector in meters.
         target_position_ecef: Target ECEF position vector in meters.
-        peak_altitude: Desired ballistic peak altitude above the WGS-84 ellipsoid in meters.
+        peak_altitude: Desired apogee/ascent-shaping altitude above the WGS-84 ellipsoid in meters.
         stages: One-stage or two-stage `RocketMover` stage definitions.
         t_end: Maximum scenario run time in seconds.
         sample_interval: HDF5 logging sample interval in seconds.
@@ -52,21 +138,21 @@ def run_ballistic_missile_scenario(
     # XXX If we need to validate all inputs here, can re-include that from old scenario
     # But I think constructors decently cover all that
 
-    ascent_program = _derive_ascent_program(
+    controller_kwargs = _derive_rocket_controller_kwargs(
         initial_position_ecef,
         target_position_ecef,
         peak_altitude,
+        stages,
     )
     initial_orientation = _orientation_from_ascent_azimuth(
         initial_position_ecef,
-        ascent_program["ascent_azimuth"],
-        ascent_program["initial_ascent_pitch"],
+        controller_kwargs["launch_azimuth"],
+        0.5 * np.pi,
     )
     initial_velocity = np.zeros(3)
     initial_body_rates = np.zeros(3)
 
     engine = SimulationEngine()
-    # TODO Need to translate the user-provided arguments into Ballistic missile and guidance constructor arguments
     mover = RocketMover(
         initial_position=initial_position_ecef,
         initial_velocity=initial_velocity,
@@ -74,11 +160,7 @@ def run_ballistic_missile_scenario(
         initial_body_rates=initial_body_rates,
         stages=stages,
     )
-    controller = RocketController(
-        ascent_program=ascent_program,
-        stages=stages,
-        peak_altitude=peak_altitude,
-    )
+    controller = RocketController(**controller_kwargs)
     platform = Platform("ballistic_missile", mover, controller)
     engine.register_platform(platform)
 
