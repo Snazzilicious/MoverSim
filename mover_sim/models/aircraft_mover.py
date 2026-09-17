@@ -2,6 +2,7 @@ import numpy as np
 from mover_sim.core.mover import IntegratedMover, TranslationalMover, TranslationalIntegratedMover
 from mover_sim.core.controller import Controller
 from mover_sim.core.engine import Event
+from mover_sim.core.platform import Platform
 from mover_sim.math.physics import aerodynamic_drag_force, air_density, centrifugal_acceleration, coriolis_acceleration, coriolis_vector, gravity, GM
 from mover_sim.math.coordinates import ecef_to_lla, ecef_to_enu, lla_to_ecef
 from mover_sim.math.orientation import (
@@ -1678,10 +1679,69 @@ class RocketMover(TranslationalMover, IntegratedMover):
             return False
         return propellant_mass <= 0.0
 
+    def _derive_expended_stage_state(self):
+        return {
+            "position": np.asarray(self.position, dtype=float).copy(),
+            "velocity": np.asarray(self.velocity, dtype=float).copy(),
+            "orientation": np.asarray(self.orientation, dtype=float).copy(),
+            "omega_body": np.asarray(self.omega_body, dtype=float).copy(),
+        }
+
+    def _build_expended_stage_mover(self, separated_stage, spent_stage_state):
+        return ExpendedStageMover(
+            initial_position=spent_stage_state["position"],
+            initial_velocity=spent_stage_state["velocity"],
+            initial_orientation=spent_stage_state["orientation"],
+            initial_body_rates=spent_stage_state["omega_body"],
+            mass=float(separated_stage["dry_mass"]),
+            rotational_mass=separated_stage["rotational_mass"],
+            area=float(separated_stage["reference_area"]),
+            cd0=float(separated_stage["drag_coefficient"]),
+            normal_force_coefficient=float(
+                separated_stage.get(
+                    "normal_force_coefficient",
+                    self.base_normal_force_coefficient,
+                )
+            ),
+            alignment_restoring_coefficient=float(
+                separated_stage.get(
+                    "alignment_restoring_coefficient",
+                    self.base_alignment_restoring_coefficient,
+                )
+            ),
+            angular_damping=separated_stage["angular_damping"],
+            use_coriolis=self.use_coriolis,
+        )
+
+    def _register_expended_stage(self, engine, separated_stage_index, separated_stage):
+        if engine is None:
+            raise ValueError("engine is required to register an expended stage")
+
+        spent_stage_state = self._derive_expended_stage_state()
+        spent_stage_mover = self._build_expended_stage_mover(separated_stage, spent_stage_state)
+        platform_id_root = self.platform.id if self.platform is not None else f"rocket_{id(self)}"
+        spent_stage_platform = Platform(
+            f"{platform_id_root}_spent_stage_{separated_stage_index + 1}",
+            spent_stage_mover,
+            properties={
+                "phase": "separated_ballistic_coast",
+                "source_platform_id": platform_id_root,
+                "separated_stage_index": separated_stage_index,
+            },
+        )
+        engine.register_platform(spent_stage_platform)
+        return spent_stage_platform
+
     def separate_stage(self, engine):
         current_propellant_mass = self.propellant_mass
         if not self.can_separate_stage(current_propellant_mass):
             raise RuntimeError("current stage cannot be separated")
+
+        separated_stage_index = self.active_stage_index
+        separated_stage = dict(self.stages[separated_stage_index])
+        # Register the spent stage from the live pre-separation state so it can
+        # continue passively and be logged as its own trajectory.
+        self._register_expended_stage(engine, separated_stage_index, separated_stage)
 
         self.active_stage_index += 1
         next_stage = self._active_stage()
