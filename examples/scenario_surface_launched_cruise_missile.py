@@ -10,7 +10,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from mover_sim.core.engine import SimulationEngine
 from mover_sim.core.observer import HDF5Logger
 from mover_sim.core.platform import Platform
-from mover_sim.math.coordinates import lla_to_ecef
+from mover_sim.math.coordinates import ecef_to_lla, lla_to_ecef
+from mover_sim.math.orientation import build_aircraft_body_axes, project_to_rotation_matrix
 from mover_sim.models.aircraft_mover import FixedWingAutopilot, FixedWingMover
 
 
@@ -229,9 +230,30 @@ class SurfaceLaunchedCruiseMissileController(FixedWingAutopilot):
 
 
 def _initial_orientation_from_heading_pitch(initial_position_ecef, heading, pitch_angle):
-    """Returns forward, right, up basis matrix in ECEF
-    """
-    # TODO
+    """Return an ECEF forward-right-up orientation matrix for the launch attitude."""
+    position = np.asarray(initial_position_ecef, dtype=float)
+    if position.shape != (3,):
+        raise ValueError("initial_position_ecef must have shape (3,)")
+
+    heading = float(heading)
+    pitch_angle = float(pitch_angle)
+
+    lat_deg, lon_deg, _ = ecef_to_lla(position[0], position[1], position[2])
+    lat = np.radians(lat_deg)
+    lon = np.radians(lon_deg)
+
+    east = np.array([-np.sin(lon), np.cos(lon), 0.0])
+    north = np.array([
+        -np.sin(lat) * np.cos(lon),
+        -np.sin(lat) * np.sin(lon),
+        np.cos(lat),
+    ])
+    up = position / max(np.linalg.norm(position), 1e-6)
+
+    forward_horizontal = np.cos(heading) * north + np.sin(heading) * east
+    forward = np.cos(pitch_angle) * forward_horizontal + np.sin(pitch_angle) * up
+    forward_axis, right_axis, up_axis = build_aircraft_body_axes(forward, up)
+    return project_to_rotation_matrix(np.column_stack([forward_axis, right_axis, up_axis]))
 
 
 SCENARIO_EVENT_TOPICS = [
@@ -284,6 +306,8 @@ def run_surface_launched_cruise_missile_scenario(
     )
     initial_velocity = np.zeros(3)
     initial_body_rates = np.zeros(3)
+    mover_mass = 10000.0
+    boost_thrust = boost_acceleration * mover_mass
 
     engine = SimulationEngine()
     mover = SurfaceLaunchedCruiseMissileMover(
@@ -291,6 +315,8 @@ def run_surface_launched_cruise_missile_scenario(
         initial_velocity=initial_velocity,
         initial_orientation=initial_orientation,
         initial_body_rates=initial_body_rates,
+        mass=mover_mass,
+        boost_thrust=boost_thrust,
     )
     controller = SurfaceLaunchedCruiseMissileController(
         cruise_speed=cruise_speed,
