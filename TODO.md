@@ -6,7 +6,6 @@
     * They largely have the same structure as to originals, but with different implementation.
     * Some TODO items are left
     * May need to revise the arguments to the run_* functions to be logically consistent with constructors
-    * See last 2 commits
 * Known supporting steps include
     * Add registration of ExpendedStage in RocketMover.separate_stage (or something similar)
     * Add add_waypoint to FixedWingAutopilot which will put the controller back in tracking mode if no waypoints currently exist
@@ -17,8 +16,8 @@
     * mover_sim/hdf5_utils.py
     * others?
 
-surface launch
 air launch
+    * Test that mother ship holds its course
 ballistic
 
 ### Grand TODO

@@ -3,14 +3,20 @@ import sys
 from pathlib import Path
 
 import h5py
+import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from mover_sim.math.coordinates import lla_to_ecef
+from mover_sim.core.engine import SimulationEngine
+from mover_sim.core.observer import HDF5Logger
+from mover_sim.core.platform import Platform
+from mover_sim.math.coordinates import ecef_to_lla, lla_to_ecef
+from mover_sim.math.orientation import build_aircraft_body_axes, project_to_rotation_matrix
+from mover_sim.models.aircraft_mover import FixedWingAutopilot, FixedWingMover
 
 AirLaunchedCruiseMissileMover = FixedWingMover
 
-class AirLaunchedCruiseMissilController(FixedWingAutopilot):
+class AirLaunchedCruiseMissileController(FixedWingAutopilot):
 
     def __init__( self, ..., guidance_delay ):
         self.t_launch = None
@@ -52,7 +58,7 @@ class MissileLaunchEvent:
     def interval(self):
         return None
     
-    def callback( self, engine ):
+    def __call__( self, engine ):
         engine.broker.publish("missile_drop_end", self.platform)
 
         # spawn missile with same state as mothership
@@ -78,11 +84,11 @@ class MothershipRTBEvent:
     def interval(self):
         return None
     
-    def callback( self, engine ):
+    def __call__( self, engine ):
         engine.broker.publish("mothership_rtb_start", self.platform)
 
         # Add 'home' waypoint to mothership's autopilot and ensure it is tracking it
-        # can probably be like 100 km diectly behind the mover
+        # can probably be like 100 km directly behind the mover
 
 
 
