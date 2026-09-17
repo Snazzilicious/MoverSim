@@ -40,7 +40,7 @@ def run_ballistic_missile_scenario(
         initial_position_ecef: Initial ballistic-missile ECEF position vector in meters.
         target_position_ecef: Target ECEF position vector in meters.
         peak_altitude: Desired ballistic peak altitude above the WGS-84 ellipsoid in meters.
-        stages: One-stage or two-stage stack definition containing the physical parameters for each stage.
+        stages: One-stage or two-stage `RocketMover` stage definitions.
         t_end: Maximum scenario run time in seconds.
         sample_interval: HDF5 logging sample interval in seconds.
         output_group: Caller-created `h5py.Group` used as the root for this scenario run.
@@ -122,6 +122,10 @@ def run_example():
                     "thrust": 10000.0,
                     "drag_coefficient": 0.1,
                     "reference_area": 1.0,
+                    "rotational_mass": np.diag([6.0e4, 1.2e5, 1.2e5]),
+                    "angular_damping": np.array([2.0e4, 4.0e4, 4.0e4]),
+                    "max_thrust": 10000.0,
+                    "max_steering_moment": 5.0e4,
                     "separation_delay": 1.0,
                 }
             ],
@@ -142,6 +146,10 @@ def run_example():
                     "thrust": 10000.0,
                     "drag_coefficient": 0.1,
                     "reference_area": 1.0,
+                    "rotational_mass": np.diag([6.0e4, 1.2e5, 1.2e5]),
+                    "angular_damping": np.array([2.0e4, 4.0e4, 4.0e4]),
+                    "max_thrust": 10000.0,
+                    "max_steering_moment": 5.0e4,
                     "separation_delay": 2.0,
                 },
                 {
@@ -151,6 +159,10 @@ def run_example():
                     "thrust": 8000.0,
                     "drag_coefficient": 0.08,
                     "reference_area": 0.8,
+                    "rotational_mass": np.diag([3.0e4, 6.0e4, 6.0e4]),
+                    "angular_damping": np.array([1.0e4, 2.0e4, 2.0e4]),
+                    "max_thrust": 8000.0,
+                    "max_steering_moment": 2.5e4,
                     "separation_delay": 1.0,
                 },
             ],
