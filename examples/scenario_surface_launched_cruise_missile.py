@@ -147,6 +147,54 @@ class SurfaceLaunchedCruiseMissileController(FixedWingAutopilot):
         mover.yaw_cmd = 0.0
         mover.thrust_cmd = 0.0
 
+    def _desired_cruise_horizontal_direction(self, mover):
+        # `cruise_heading` is defined in the mover's local ENU frame, so the desired
+        # world-frame horizontal direction must be recomputed from the current position
+        # rather than captured once at cruise entry.
+        east, north, _ = self._local_horizontal_basis(mover.position)
+        desired_horizontal = (
+            np.cos(self.cruise_heading) * north
+            + np.sin(self.cruise_heading) * east
+        )
+        desired_norm = np.linalg.norm(desired_horizontal)
+        if desired_norm <= 1e-6:
+            return north
+        return desired_horizontal / desired_norm
+
+    def _enter_hold_mode(self, mover):
+        # Reuse the base class's empty-route hold path for cruise, but seed it with the
+        # mission targets instead of freezing the post-boost speed/altitude/direction.
+        self.hold_active = True
+        self.hold_speed = self.cruise_speed
+        self.hold_altitude = self.cruise_altitude
+        self.hold_horizontal_direction = self._desired_cruise_horizontal_direction(mover)
+
+    def _update_hold_mode(self, mover):
+        # The inherited hold update would keep following the single ECEF direction stored
+        # in `hold_horizontal_direction`. That is not enough for a local ENU heading,
+        # because the corresponding world-frame direction changes as the missile moves.
+        _, vel, speed, local_up, current_altitude = self._flight_condition(mover)
+        desired_horizontal = self._desired_cruise_horizontal_direction(mover)
+        self.hold_horizontal_direction = desired_horizontal
+        heading_error = self._heading_error_to_direction(
+            mover,
+            desired_horizontal,
+            pos=mover.position,
+            vel=vel,
+            local_up=local_up,
+        )
+        vertical_error = self.cruise_altitude - current_altitude
+        self._apply_guidance(
+            mover,
+            heading_error,
+            vertical_error,
+            self.cruise_speed,
+            vel=vel,
+            speed=speed,
+            local_up=local_up,
+            alt=current_altitude,
+        )
+
     def initialize(self, engine):
         self.t_launch = engine.t
         self.phase = self.BOOST_PHASE
@@ -168,6 +216,7 @@ class SurfaceLaunchedCruiseMissileController(FixedWingAutopilot):
         if self.phase == self.BOOST_PHASE:
             self.platform.mover.boost_active = False
             self.phase = self.CRUISE_PHASE
+            self.hold_active = False
             if not self._boost_end_published:
                 engine.broker.publish("boost_end", self.platform)
                 self._boost_end_published = True
