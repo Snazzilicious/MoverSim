@@ -105,6 +105,7 @@ class SurfaceLaunchedCruiseMissileController(FixedWingAutopilot):
         self.phase = self.BOOST_PHASE
         self.t_launch = None
         self.k_boost_pitch = 100.0 / np.radians(20.0)
+        self.k_cruise_yaw = 100.0 / np.radians(30.0)
         self._boost_start_published = False
         self._boost_end_published = False
 
@@ -143,7 +144,7 @@ class SurfaceLaunchedCruiseMissileController(FixedWingAutopilot):
         )
         pitch_error = self.launch_pitch_angle - current_pitch
 
-        mover.roll_cmd = np.clip(self.k_heading * heading_error, -100.0, 100.0)
+        mover.roll_cmd = np.clip(-self.k_heading * heading_error, -100.0, 100.0)
         mover.pitch_cmd = np.clip(self.k_boost_pitch * pitch_error, -100.0, 100.0)
         mover.yaw_cmd = 0.0
         mover.thrust_cmd = 0.0
@@ -195,6 +196,14 @@ class SurfaceLaunchedCruiseMissileController(FixedWingAutopilot):
             local_up=local_up,
             alt=current_altitude,
         )
+        # This missile's lateral response uses the opposite roll-command sign from the
+        # generic FixedWingAutopilot hold logic, so flip the inherited bank command here
+        # before adding scenario-specific yaw assistance.
+        mover.roll_cmd *= -1.0
+        # FixedWingAutopilot's generic hold mode uses bank-only heading correction.
+        # Add direct yaw assistance here because this missile scenario needs stronger
+        # lateral convergence than the default empty-route hold behavior provides.
+        mover.yaw_cmd = np.clip(self.k_cruise_yaw * heading_error, -100.0, 100.0)
 
     def initialize(self, engine):
         self.t_launch = engine.t
