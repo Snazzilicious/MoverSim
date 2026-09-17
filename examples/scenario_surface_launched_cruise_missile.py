@@ -305,9 +305,6 @@ def run_surface_launched_cruise_missile_scenario(
         A dictionary containing the simulation engine, platform, logger, and output group.
     """
 
-    # XXX If we need to validate all inputs here, can re-include that from old scenario
-    # But I think constructors decently cover all that
-
     initial_orientation = _initial_orientation_from_heading_pitch(
         initial_position_ecef,
         cruise_heading,
