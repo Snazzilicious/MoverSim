@@ -70,7 +70,12 @@ def _derive_rocket_controller_kwargs(
     peak_altitude,
     stages,
 ):
-    """Derive `RocketController` kwargs heuristically from mission-level inputs."""
+    """Derive `RocketController` kwargs heuristically from mission-level inputs.
+
+    `peak_altitude` is treated as an ascent-shaping request rather than an exact
+    apogee solver. Larger requested apogees produce a steeper, longer initial
+    ascent program; smaller requested apogees produce a flatter, shorter one.
+    """
     initial_position = np.asarray(initial_position_ecef, dtype=float)
     target_position = np.asarray(target_position_ecef, dtype=float)
     peak_altitude = float(peak_altitude)
@@ -84,18 +89,16 @@ def _derive_rocket_controller_kwargs(
     )
     altitude_gain = max(peak_altitude - initial_altitude, 1.0)
 
-    if altitude_gain < 10_000.0:
-        target_ascent_pitch = np.radians(55.0)
-        vertical_rise_time = 1.0
-        pitch_over_duration = 2.0
-    elif altitude_gain < 50_000.0:
-        target_ascent_pitch = np.radians(70.0)
-        vertical_rise_time = 2.0
-        pitch_over_duration = 4.0
-    else:
-        target_ascent_pitch = np.radians(82.0)
-        vertical_rise_time = 3.0
-        pitch_over_duration = 6.0
+    # Map requested apogee into a normalized shaping factor. This keeps the
+    # public API mission-oriented while producing controller inputs that vary
+    # monotonically with the requested peak altitude.
+    low_gain = 10_000.0
+    high_gain = 50_000.0
+    shaping = np.clip((altitude_gain - low_gain) / (high_gain - low_gain), 0.0, 1.0)
+
+    target_ascent_pitch = np.radians(55.0 + shaping * (82.0 - 55.0))
+    vertical_rise_time = 1.0 + shaping * (3.0 - 1.0)
+    pitch_over_duration = 2.0 + shaping * (6.0 - 2.0)
 
     separation_delay = 0.0
     if stages:
