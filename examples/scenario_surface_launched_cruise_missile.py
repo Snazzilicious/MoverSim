@@ -16,14 +16,63 @@ from mover_sim.models.aircraft_mover import FixedWingAutopilot, FixedWingMover
 
 class SurfaceLaunchedCruiseMissileMover(FixedWingMover):
 
-    BOOST_PHASE = 1
-    CRUISE_PHASE = 2
-
-    def __init__( self, ... ):
-        self.stage = BOOST_PHASE
+    def __init__(
+        self,
+        initial_position,
+        initial_velocity,
+        initial_orientation=None,
+        initial_body_rates=None,
+        mass=10000.0,
+        rotational_mass=None,
+        area=30.0,
+        cd0=0.02,
+        cd_alpha=0.3,
+        cd_beta=0.3,
+        cl_alpha=4.5,
+        cy_beta=-1.5,
+        bank_restoring_coeff=2.0e4,
+        alpha_restoring_coeff=3.0e4,
+        beta_restoring_coeff=2.0e4,
+        roll_damping_coeff=1.5e4,
+        pitch_damping_coeff=2.0e4,
+        yaw_damping_coeff=1.5e4,
+        max_thrust=80000.0,
+        max_roll_moment=5.0e4,
+        max_pitch_moment=5.0e4,
+        max_yaw_moment=2.0e4,
+        use_coriolis=True,
+        boost_thrust=0.0,
+    ):
+        super().__init__(
+            initial_position=initial_position,
+            initial_velocity=initial_velocity,
+            initial_orientation=initial_orientation,
+            initial_body_rates=initial_body_rates,
+            mass=mass,
+            rotational_mass=rotational_mass,
+            area=area,
+            cd0=cd0,
+            cd_alpha=cd_alpha,
+            cd_beta=cd_beta,
+            cl_alpha=cl_alpha,
+            cy_beta=cy_beta,
+            bank_restoring_coeff=bank_restoring_coeff,
+            alpha_restoring_coeff=alpha_restoring_coeff,
+            beta_restoring_coeff=beta_restoring_coeff,
+            roll_damping_coeff=roll_damping_coeff,
+            pitch_damping_coeff=pitch_damping_coeff,
+            yaw_damping_coeff=yaw_damping_coeff,
+            max_thrust=max_thrust,
+            max_roll_moment=max_roll_moment,
+            max_pitch_moment=max_pitch_moment,
+            max_yaw_moment=max_yaw_moment,
+            use_coriolis=use_coriolis,
+        )
+        self.boost_thrust = float(boost_thrust)
+        self.boost_active = True
     
     def _thrust_vector( self, forward ):
-        if self.stage == BOOST_PHASE:
+        if self.boost_active:
             return self.boost_thrust * forward
         else:
             return super()._thrust_vector( forward )
@@ -43,7 +92,7 @@ class SurfaceLaunchedCruiseMissileController(FixedWingAutopilot):
     def update( self, t, engine ):
         if t - self.t_launch < self.guidance_delay:
             return
-        self.platform.mover.stage = CRUISE_PHASE
+        self.platform.mover.boost_active = False
         if not self._boost_end_published:
             engine.broker.publish("boost_end", self.platform)
             self._boost_end_published = True
@@ -77,7 +126,10 @@ def run_surface_launched_cruise_missile_scenario(
     sample_interval,
     output_group,
 ):
-    """Run surface-launched cruise missile tracking a given heading and save HDF5 telemetry.
+    """Run a surface-launched cruise-missile mission and save HDF5 telemetry.
+
+    This is the public scenario entry point. Its arguments are mission-level inputs,
+    while mover- and controller-specific implementation details remain internal.
 
     Args:
         initial_position_ecef: Initial missile ECEF position vector in meters.
@@ -113,8 +165,6 @@ def run_surface_launched_cruise_missile_scenario(
         initial_orientation=initial_orientation,
         initial_body_rates=initial_body_rates,
     )
-    # TODO Need to decide where to translate the user-provided arguments into Autopilot constructor arguments
-    # here? in SurfaceLaunchedCruiseMissileController constructor?
     controller = SurfaceLaunchedCruiseMissileController(
         cruise_speed=cruise_speed,
         cruise_altitude=cruise_altitude,
