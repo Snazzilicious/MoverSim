@@ -91,6 +91,39 @@ class MothershipRTBEvent:
         # can probably be like 100 km directly behind the mover
 
 
+def _local_enu_basis(position_ecef):
+    position = np.asarray(position_ecef, dtype=float)
+    if position.shape != (3,):
+        raise ValueError("position_ecef must have shape (3,)")
+
+    lat_deg, lon_deg, _ = ecef_to_lla(position[0], position[1], position[2])
+    lat = np.radians(lat_deg)
+    lon = np.radians(lon_deg)
+
+    east = np.array([-np.sin(lon), np.cos(lon), 0.0])
+    north = np.array([
+        -np.sin(lat) * np.cos(lon),
+        -np.sin(lat) * np.sin(lon),
+        np.cos(lat),
+    ])
+    up = position / max(np.linalg.norm(position), 1e-6)
+    return east, north, up
+
+
+def _velocity_from_heading_speed(position_ecef, heading, speed, flight_path_angle=0.0):
+    heading = float(heading)
+    speed = float(speed)
+    flight_path_angle = float(flight_path_angle)
+    if speed <= 0.0:
+        raise ValueError("speed must be greater than 0")
+
+    east, north, up = _local_enu_basis(position_ecef)
+    horizontal_direction = np.cos(heading) * north + np.sin(heading) * east
+    direction = np.cos(flight_path_angle) * horizontal_direction + np.sin(flight_path_angle) * up
+    direction /= max(np.linalg.norm(direction), 1e-6)
+    return speed * direction
+
+
 
 SCENARIO_EVENT_TOPICS = [
     "platform_registered",
@@ -116,7 +149,10 @@ def run_air_launched_cruise_missile_scenario(
     sample_interval,
     output_group,
 ):
-    """Run air-launched cruise missile tracking a given heading and save HDF5 telemetry.
+    """Run an air-launched cruise-missile mission and save HDF5 telemetry.
+
+    This is the public scenario entry point. Its arguments are mission-level inputs,
+    while mover-, controller-, and event-specific implementation details remain internal.
 
     Args:
         mothership_initial_position_ecef: Initial mothership ECEF position vector in meters.
@@ -137,17 +173,9 @@ def run_air_launched_cruise_missile_scenario(
         A dictionary containing the simulation engine, mothership platform, logger, and output group.
     """
 
-    # XXX If we need to validate all inputs here, can re-include that from old scenario
-    # But I think constructors decently cover all that
-
     if missile_launch_time > t_end:
         raise ValueError("missile_launch_time must be less than or equal to t_end")
 
-    mothership_initial_orientation = _orientation_from_heading_pitch(
-        mothership_initial_position_ecef,
-        mothership_cruise_heading,
-        0.0,
-    )
     mothership_initial_velocity = _velocity_from_heading_speed(
         mothership_initial_position_ecef,
         mothership_cruise_heading,
@@ -159,7 +187,6 @@ def run_air_launched_cruise_missile_scenario(
     mothership_mover = AirLaunchedCruiseMissileMothershipMover(
         initial_position=mothership_initial_position_ecef,
         initial_velocity=mothership_initial_velocity,
-        initial_orientation=mothership_initial_orientation,
         initial_body_rates=mothership_initial_body_rates,
     )
     mothership_controller = AirLaunchedCruiseMissileMothershipController(
