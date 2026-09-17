@@ -255,8 +255,45 @@ class AirLaunchedCruiseMissileMothershipController(FixedWingAutopilot):
 
 
 class MissileLaunchEvent:
-    def __init__( self, missile_launch_time ):
-        ...
+    def __init__(
+        self,
+        missile_launch_time,
+        mothership_platform,
+        missile_cruise_speed,
+        missile_cruise_altitude,
+        missile_cruise_heading,
+        missile_drop_duration,
+        mothership_rtb_position_ecef=None,
+        mothership_rtb_delay=2.0,
+    ):
+        self.missile_launch_time = float(missile_launch_time)
+        self.mothership_platform = mothership_platform
+        self.missile_cruise_speed = float(missile_cruise_speed)
+        self.missile_cruise_altitude = float(missile_cruise_altitude)
+        self.missile_cruise_heading = float(missile_cruise_heading)
+        self.missile_drop_duration = float(missile_drop_duration)
+        self.mothership_rtb_position_ecef = self._coerce_optional_vector3(
+            mothership_rtb_position_ecef,
+            "mothership_rtb_position_ecef",
+        )
+        self.mothership_rtb_delay = float(mothership_rtb_delay)
+
+    def _coerce_optional_vector3(self, value, name):
+        if value is None:
+            return None
+        vector = np.asarray(value, dtype=float)
+        if vector.shape != (3,):
+            raise ValueError(f"{name} must have shape (3,)")
+        return vector
+
+    def _derive_missile_release_state(self):
+        mover = self.mothership_platform.mover
+        return {
+            "position": np.asarray(mover.position, dtype=float).copy(),
+            "velocity": np.asarray(mover.velocity, dtype=float).copy(),
+            "orientation": np.asarray(mover.orientation, dtype=float).copy(),
+            "body_rates": np.asarray(mover.get_state()[mover.get_omega_slice()], dtype=float).copy(),
+        }
 
     @property
     def time(self):
@@ -271,18 +308,36 @@ class MissileLaunchEvent:
         return None
     
     def __call__( self, engine ):
-        engine.broker.publish("missile_drop_end", self.platform)
+        release_state = self._derive_missile_release_state()
+        missile_mover = AirLaunchedCruiseMissileMover(
+            initial_position=release_state["position"],
+            initial_velocity=release_state["velocity"],
+            initial_orientation=release_state["orientation"],
+            initial_body_rates=release_state["body_rates"],
+        )
+        missile_controller = AirLaunchedCruiseMissileController(
+            cruise_speed=self.missile_cruise_speed,
+            cruise_altitude=self.missile_cruise_altitude,
+            cruise_heading=self.missile_cruise_heading,
+            drop_duration=self.missile_drop_duration,
+        )
+        missile_platform = Platform("released_missile", missile_mover, missile_controller)
+        engine.register_platform(missile_platform)
+        engine.broker.publish("missile_release", missile_platform)
 
-        # spawn missile with same state as mothership
-        engine.register_platform(...)
-
-        # schedule a begin-rtb event 1-2 seconds in the future
-        rtb = MothershipRTBEvent( engine.t + 2, mothership_platform )
+        # After release, queue the in-place mode switch that sends the mothership home.
+        rtb = MothershipRTBEvent(
+            engine.t + self.mothership_rtb_delay,
+            self.mothership_platform,
+            self.mothership_rtb_position_ecef,
+        )
         engine.schedule( rtb.time, rtb, rtb.name, rtb.interval )
 
 class MothershipRTBEvent:
-    def __init__( self, time, mothership_platform ):
-        ...
+    def __init__( self, time, mothership_platform, rtb_position_ecef=None ):
+        self._time = float(time)
+        self.mothership_platform = mothership_platform
+        self.rtb_position_ecef = rtb_position_ecef
 
     @property
     def time(self):
@@ -297,7 +352,7 @@ class MothershipRTBEvent:
         return None
     
     def __call__( self, engine ):
-        engine.broker.publish("mothership_rtb_start", self.platform)
+        engine.broker.publish("mothership_rtb_start", self.mothership_platform)
 
         # Add 'home' waypoint to mothership's autopilot and ensure it is tracking it
         # can probably be like 100 km directly behind the mover
@@ -410,7 +465,15 @@ def run_air_launched_cruise_missile_scenario(
     mothership_platform = Platform("mothership", mothership_mover, mothership_controller)
     engine.register_platform(mothership_platform)
 
-    missile_launch = MissileLaunchEvent( missile_launch_time )
+    missile_launch = MissileLaunchEvent(
+        missile_launch_time=missile_launch_time,
+        mothership_platform=mothership_platform,
+        missile_cruise_speed=missile_cruise_speed,
+        missile_cruise_altitude=missile_cruise_altitude,
+        missile_cruise_heading=missile_cruise_heading,
+        missile_drop_duration=missile_drop_duration,
+        mothership_rtb_position_ecef=mothership_rtb_position_ecef,
+    )
     engine.schedule( missile_launch.time, missile_launch, missile_launch.name, missile_launch.interval )
 
     logger = HDF5Logger(
