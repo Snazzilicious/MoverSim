@@ -40,6 +40,7 @@ class AirLaunchedCruiseMissileController(FixedWingAutopilot):
         self.drop_duration = float(drop_duration)
         self.phase = self.DROP_PHASE
         self.t_launch = None
+        self.k_cruise_yaw = 100.0 / np.radians(30.0)
         self._drop_start_published = False
         self._drop_end_published = False
 
@@ -49,6 +50,59 @@ class AirLaunchedCruiseMissileController(FixedWingAutopilot):
         mover.roll_cmd = 0.0
         mover.pitch_cmd = 0.0
         mover.yaw_cmd = 0.0
+
+    def _desired_cruise_horizontal_direction(self, mover):
+        # `cruise_heading` is defined in the missile's local ENU frame, so resolve the
+        # desired world-frame direction from the current position rather than storing one
+        # fixed ECEF direction at cruise entry.
+        east, north, _ = _local_enu_basis(mover.position)
+        desired_horizontal = (
+            np.cos(self.cruise_heading) * north
+            + np.sin(self.cruise_heading) * east
+        )
+        desired_norm = np.linalg.norm(desired_horizontal)
+        if desired_norm <= 1e-6:
+            return north
+        return desired_horizontal / desired_norm
+
+    def _enter_hold_mode(self, mover):
+        # Reuse the base class empty-route hold path for cruise, but seed it with the
+        # missile's commanded mission targets instead of its post-drop state.
+        self.hold_active = True
+        self.hold_speed = self.cruise_speed
+        self.hold_altitude = self.cruise_altitude
+        self.hold_horizontal_direction = self._desired_cruise_horizontal_direction(mover)
+
+    def _update_hold_mode(self, mover):
+        # The inherited hold update freezes one world-frame heading vector. Recompute the
+        # target from the current local ENU basis so the missile continues to track the
+        # commanded local heading as it moves over the Earth.
+        _, vel, speed, local_up, current_altitude = self._flight_condition(mover)
+        desired_horizontal = self._desired_cruise_horizontal_direction(mover)
+        self.hold_horizontal_direction = desired_horizontal
+        heading_error = self._heading_error_to_direction(
+            mover,
+            desired_horizontal,
+            pos=mover.position,
+            vel=vel,
+            local_up=local_up,
+        )
+        vertical_error = self.cruise_altitude - current_altitude
+        self._apply_guidance(
+            mover,
+            heading_error,
+            vertical_error,
+            self.cruise_speed,
+            vel=vel,
+            speed=speed,
+            local_up=local_up,
+            alt=current_altitude,
+        )
+        # Match the lateral-control convention used by the released-missile dynamics and
+        # add direct yaw assistance so cruise heading convergence is stronger than the
+        # generic bank-only empty-route hold logic.
+        mover.roll_cmd *= -1.0
+        mover.yaw_cmd = np.clip(self.k_cruise_yaw * heading_error, -100.0, 100.0)
 
     def initialize(self, engine):
         self.t_launch = engine.t
@@ -68,6 +122,7 @@ class AirLaunchedCruiseMissileController(FixedWingAutopilot):
 
         if self.phase == self.DROP_PHASE:
             self.phase = self.CRUISE_PHASE
+            self.hold_active = False
             if not self._drop_end_published:
                 engine.broker.publish("missile_drop_end", self.platform)
                 self._drop_end_published = True
