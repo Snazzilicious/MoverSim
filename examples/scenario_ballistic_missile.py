@@ -16,13 +16,10 @@ from mover_sim.models.aircraft_mover import RocketController, RocketMover
 
 SCENARIO_EVENT_TOPICS = [
     "platform_registered",
-    "stage_1_burnout",
-    "stage_1_separation",
-    "stage_2_burnout",
-    "stage_2_separation",
+    "stage_burnout",
+    "stage_separation",
     "ballistic_coast_start",
-    "spent_stage_ground_impact",
-    "active_body_ground_impact",
+    "ground_impact",
 ]
 
 
@@ -149,9 +146,8 @@ def run_ballistic_missile_scenario(
         A dictionary containing the simulation engine, active platform, logger, and output group.
     """
 
-    # XXX If we need to validate all inputs here, can re-include that from old scenario
-    # But I think constructors decently cover all that
-
+    # This wrapper keeps the public API mission-oriented and translates those
+    # inputs into the lower-level `RocketMover` / `RocketController` inputs.
     controller_kwargs = _derive_rocket_controller_kwargs(
         initial_position_ecef,
         target_position_ecef,
