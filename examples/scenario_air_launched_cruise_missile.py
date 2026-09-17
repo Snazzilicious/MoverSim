@@ -43,6 +43,13 @@ class AirLaunchedCruiseMissileController(FixedWingAutopilot):
         self._drop_start_published = False
         self._drop_end_published = False
 
+    def _command_drop_behavior(self, mover):
+        # Keep the released missile unpowered and passive during the short drop window.
+        mover.thrust_cmd = 0.0
+        mover.roll_cmd = 0.0
+        mover.pitch_cmd = 0.0
+        mover.yaw_cmd = 0.0
+
     def initialize(self, engine):
         self.t_launch = engine.t
         self.phase = self.DROP_PHASE
@@ -52,12 +59,21 @@ class AirLaunchedCruiseMissileController(FixedWingAutopilot):
             self._drop_start_published = True
 
     def update( self, t, engine ):
-        if t - self.t_launch < self.drop_duration:
+        if self.t_launch is None:
+            self.t_launch = t
+
+        if self.phase == self.DROP_PHASE and t - self.t_launch < self.drop_duration:
+            self._command_drop_behavior(self.platform.mover)
             return
-        self.phase = self.CRUISE_PHASE
-        if not self._drop_end_published:
-            engine.broker.publish("missile_drop_end", self.platform)
-            self._drop_end_published = True
+
+        if self.phase == self.DROP_PHASE:
+            self.phase = self.CRUISE_PHASE
+            if not self._drop_end_published:
+                engine.broker.publish("missile_drop_end", self.platform)
+                self._drop_end_published = True
+
+        if self.phase != self.CRUISE_PHASE:
+            return
         
         super().update( t, engine )
 
