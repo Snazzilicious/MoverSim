@@ -3,7 +3,7 @@
 * We are moving them to examples/ and merging them with the existing driver scripts
 * We are updating them to use the new FixedWingMover and RocketMover
 * I have sketched out the new designs:
-    * They largely have the same structure as to originals, but with different implementation.
+    * They largely have the same structure as the originals, but with different implementation.
     * Some TODO items are left
     * May need to revise the arguments to the run_* functions to be logically consistent with constructors
 * Known supporting steps include

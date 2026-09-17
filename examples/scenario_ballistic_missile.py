@@ -3,13 +3,15 @@ import sys
 from pathlib import Path
 
 import h5py
+import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from mover_sim.core.engine import SimulationEngine
+from mover_sim.core.observer import HDF5Logger
+from mover_sim.core.platform import Platform
 from mover_sim.math.coordinates import lla_to_ecef
-
-# XXX Should be able to completely reuse RocketMover and RocketController after
-# TODO add registration of expended stage to RocketMover
+from mover_sim.models.aircraft_mover import RocketController, RocketMover
 
 SCENARIO_EVENT_TOPICS = [
     "platform_registered",
@@ -65,14 +67,14 @@ def run_ballistic_missile_scenario(
 
     engine = SimulationEngine()
     # TODO Need to translate the user-provided arguments into Ballistic missile and guidance constructor arguments
-    mover = BallisticMissileMover(
+    mover = RocketMover(
         initial_position=initial_position_ecef,
         initial_velocity=initial_velocity,
         initial_orientation=initial_orientation,
         initial_body_rates=initial_body_rates,
         stages=stages,
     )
-    controller = BallisticMissileController(
+    controller = RocketController(
         ascent_program=ascent_program,
         stages=stages,
         peak_altitude=peak_altitude,
