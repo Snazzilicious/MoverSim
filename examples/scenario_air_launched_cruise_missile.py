@@ -337,7 +337,15 @@ class MothershipRTBEvent:
     def __init__( self, time, mothership_platform, rtb_position_ecef=None ):
         self._time = float(time)
         self.mothership_platform = mothership_platform
-        self.rtb_position_ecef = rtb_position_ecef
+        self.rtb_position_ecef = self._coerce_optional_vector3(rtb_position_ecef, "rtb_position_ecef")
+
+    def _coerce_optional_vector3(self, value, name):
+        if value is None:
+            return None
+        vector = np.asarray(value, dtype=float)
+        if vector.shape != (3,):
+            raise ValueError(f"{name} must have shape (3,)")
+        return vector
 
     @property
     def time(self):
@@ -352,10 +360,16 @@ class MothershipRTBEvent:
         return None
     
     def __call__( self, engine ):
-        engine.broker.publish("mothership_rtb_start", self.mothership_platform)
+        controller = self.mothership_platform.controller
+        if not isinstance(controller, AirLaunchedCruiseMissileMothershipController):
+            raise ValueError(
+                "mothership_platform must contain an AirLaunchedCruiseMissileMothershipController"
+            )
 
-        # Add 'home' waypoint to mothership's autopilot and ensure it is tracking it
-        # can probably be like 100 km directly behind the mover
+        # Switch the existing controller in-place so the next update rebuilds hold
+        # guidance from the RTB destination instead of the pre-release cruise state.
+        controller.enter_rtb(self.rtb_position_ecef)
+        engine.broker.publish("mothership_rtb_start", self.mothership_platform)
 
 
 def _local_enu_basis(position_ecef):
