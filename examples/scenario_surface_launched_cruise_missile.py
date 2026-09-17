@@ -103,8 +103,49 @@ class SurfaceLaunchedCruiseMissileController(FixedWingAutopilot):
         self.launch_pitch_angle = float(launch_pitch_angle)
         self.phase = self.BOOST_PHASE
         self.t_launch = None
+        self.k_boost_pitch = 100.0 / np.radians(20.0)
         self._boost_start_published = False
         self._boost_end_published = False
+
+    def _local_horizontal_basis(self, position):
+        local_up = position / max(np.linalg.norm(position), 1e-6)
+        earth_z = np.array([0.0, 0.0, 1.0])
+        east = np.cross(earth_z, local_up)
+        east_norm = np.linalg.norm(east)
+        if east_norm <= 1e-6:
+            east = np.array([0.0, 1.0, 0.0])
+        else:
+            east = east / east_norm
+        north = np.cross(local_up, east)
+        north = north / max(np.linalg.norm(north), 1e-6)
+        return east, north, local_up
+
+    def _command_boost_attitude(self, mover):
+        east, north, local_up = self._local_horizontal_basis(mover.position)
+        desired_horizontal = (
+            np.cos(self.cruise_heading) * north
+            + np.sin(self.cruise_heading) * east
+        )
+        heading_error = self._heading_error_to_direction(
+            mover,
+            desired_horizontal,
+            pos=mover.position,
+            vel=mover.velocity,
+            local_up=local_up,
+        )
+
+        forward = mover.orientation[:, 0]
+        forward_horizontal = forward - np.dot(forward, local_up) * local_up
+        current_pitch = np.arctan2(
+            np.dot(forward, local_up),
+            max(np.linalg.norm(forward_horizontal), 1e-6),
+        )
+        pitch_error = self.launch_pitch_angle - current_pitch
+
+        mover.roll_cmd = np.clip(self.k_heading * heading_error, -100.0, 100.0)
+        mover.pitch_cmd = np.clip(self.k_boost_pitch * pitch_error, -100.0, 100.0)
+        mover.yaw_cmd = 0.0
+        mover.thrust_cmd = 0.0
 
     def initialize(self, engine):
         self.t_launch = engine.t
@@ -121,6 +162,7 @@ class SurfaceLaunchedCruiseMissileController(FixedWingAutopilot):
 
         if self.phase == self.BOOST_PHASE and t - self.t_launch < self.boost_duration:
             self.platform.mover.boost_active = True
+            self._command_boost_attitude(self.platform.mover)
             return
 
         if self.phase == self.BOOST_PHASE:
