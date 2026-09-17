@@ -134,7 +134,113 @@ class AirLaunchedCruiseMissileController(FixedWingAutopilot):
 
 
 AirLaunchedCruiseMissileMothershipMover = FixedWingMover
-AirLaunchedCruiseMissileMothershipController = FixedWingAutopilot
+
+
+class AirLaunchedCruiseMissileMothershipController(FixedWingAutopilot):
+
+    CRUISE_MODE = "cruise"
+    RTB_MODE = "rtb"
+
+    def __init__(
+        self,
+        cruise_speed,
+        cruise_altitude,
+        cruise_heading,
+        rtb_position_ecef=None,
+        update_interval=0.1,
+    ):
+        super().__init__(
+            waypoints=[],
+            target_speed=cruise_speed,
+            update_interval=update_interval,
+        )
+        self.cruise_speed = float(cruise_speed)
+        self.cruise_altitude = float(cruise_altitude)
+        self.cruise_heading = float(cruise_heading)
+        self.rtb_position_ecef = self._coerce_optional_vector3(rtb_position_ecef, "rtb_position_ecef")
+        self.mode = self.CRUISE_MODE
+
+    def _coerce_optional_vector3(self, value, name):
+        if value is None:
+            return None
+        vector = np.asarray(value, dtype=float)
+        if vector.shape != (3,):
+            raise ValueError(f"{name} must have shape (3,)")
+        return vector
+
+    def _desired_cruise_horizontal_direction(self, mover):
+        east, north, _ = _local_enu_basis(mover.position)
+        desired_horizontal = (
+            np.cos(self.cruise_heading) * north
+            + np.sin(self.cruise_heading) * east
+        )
+        desired_norm = np.linalg.norm(desired_horizontal)
+        if desired_norm <= 1e-6:
+            return north
+        return desired_horizontal / desired_norm
+
+    def _desired_rtb_horizontal_direction(self, mover):
+        if self.rtb_position_ecef is None:
+            return self._desired_cruise_horizontal_direction(mover)
+
+        local_up = mover.position / max(np.linalg.norm(mover.position), 1e-6)
+        rel = self.rtb_position_ecef - mover.position
+        rel_horizontal = rel - np.dot(rel, local_up) * local_up
+        rel_horizontal_norm = np.linalg.norm(rel_horizontal)
+        if rel_horizontal_norm <= 1e-6:
+            return self._desired_cruise_horizontal_direction(mover)
+        return rel_horizontal / rel_horizontal_norm
+
+    def _target_altitude(self):
+        if self.mode == self.RTB_MODE and self.rtb_position_ecef is not None:
+            return ecef_to_lla(
+                self.rtb_position_ecef[0],
+                self.rtb_position_ecef[1],
+                self.rtb_position_ecef[2],
+            )[2]
+        return self.cruise_altitude
+
+    def enter_rtb(self, rtb_position_ecef=None):
+        if rtb_position_ecef is not None:
+            self.rtb_position_ecef = self._coerce_optional_vector3(rtb_position_ecef, "rtb_position_ecef")
+        self.mode = self.RTB_MODE
+        self.hold_active = False
+
+    def _enter_hold_mode(self, mover):
+        self.hold_active = True
+        self.hold_speed = self.cruise_speed
+        self.hold_altitude = self._target_altitude()
+        if self.mode == self.RTB_MODE:
+            self.hold_horizontal_direction = self._desired_rtb_horizontal_direction(mover)
+        else:
+            self.hold_horizontal_direction = self._desired_cruise_horizontal_direction(mover)
+
+    def _update_hold_mode(self, mover):
+        _, vel, speed, local_up, current_altitude = self._flight_condition(mover)
+        if self.mode == self.RTB_MODE:
+            desired_horizontal = self._desired_rtb_horizontal_direction(mover)
+        else:
+            desired_horizontal = self._desired_cruise_horizontal_direction(mover)
+
+        self.hold_horizontal_direction = desired_horizontal
+        heading_error = self._heading_error_to_direction(
+            mover,
+            desired_horizontal,
+            pos=mover.position,
+            vel=vel,
+            local_up=local_up,
+        )
+        vertical_error = self._target_altitude() - current_altitude
+        self._apply_guidance(
+            mover,
+            heading_error,
+            vertical_error,
+            self.cruise_speed,
+            vel=vel,
+            speed=speed,
+            local_up=local_up,
+            alt=current_altitude,
+        )
 
 
 class MissileLaunchEvent:
