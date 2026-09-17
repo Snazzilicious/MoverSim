@@ -18,19 +18,43 @@ AirLaunchedCruiseMissileMover = FixedWingMover
 
 class AirLaunchedCruiseMissileController(FixedWingAutopilot):
 
-    def __init__( self, ..., guidance_delay ):
+    DROP_PHASE = "drop"
+    CRUISE_PHASE = "cruise"
+
+    def __init__(
+        self,
+        cruise_speed,
+        cruise_altitude,
+        cruise_heading,
+        drop_duration,
+        update_interval=0.1,
+    ):
+        super().__init__(
+            waypoints=[],
+            target_speed=cruise_speed,
+            update_interval=update_interval,
+        )
+        self.cruise_speed = float(cruise_speed)
+        self.cruise_altitude = float(cruise_altitude)
+        self.cruise_heading = float(cruise_heading)
+        self.drop_duration = float(drop_duration)
+        self.phase = self.DROP_PHASE
         self.t_launch = None
+        self._drop_start_published = False
+        self._drop_end_published = False
 
     def initialize(self, engine):
-        self.t_launch = engine.t # save time of launch to begin delay timer
+        self.t_launch = engine.t
+        self.phase = self.DROP_PHASE
         super().initialize(engine)
         if not self._drop_start_published:
             engine.broker.publish("missile_drop_start", self.platform)
             self._drop_start_published = True
 
     def update( self, t, engine ):
-        if t - self.t_launch < self.guidance_delay:
+        if t - self.t_launch < self.drop_duration:
             return
+        self.phase = self.CRUISE_PHASE
         if not self._drop_end_published:
             engine.broker.publish("missile_drop_end", self.platform)
             self._drop_end_published = True
