@@ -11,7 +11,7 @@ from mover_sim.core.engine import SimulationEngine
 from mover_sim.core.observer import HDF5Logger
 from mover_sim.core.platform import Platform
 from mover_sim.math.coordinates import ecef_to_lla, lla_to_ecef
-from mover_sim.math.orientation import build_aircraft_body_axes, project_to_rotation_matrix
+from mover_sim.math.orientation import project_to_rotation_matrix
 from mover_sim.models.aircraft_mover import RocketController, RocketMover
 
 SCENARIO_EVENT_TOPICS = [
@@ -56,11 +56,22 @@ def _derive_ascent_azimuth(initial_position_ecef, target_position_ecef):
     return np.arctan2(east_component, north_component)
 
 
-def _orientation_from_ascent_azimuth(position_ecef, ascent_azimuth, ascent_pitch):
+def _vertical_launch_orientation(position_ecef, launch_azimuth):
+    """Return a minimal vertical-launch orientation aligned to the launch azimuth.
+
+    The initial forward axis points straight up. The azimuth only fixes the roll
+    reference about that vertical axis so the subsequent pitch-over occurs in the
+    intended horizontal plane.
+    """
     east, north, up = _local_enu_basis(position_ecef)
-    forward_horizontal = np.cos(ascent_azimuth) * north + np.sin(ascent_azimuth) * east
-    forward = np.cos(ascent_pitch) * forward_horizontal + np.sin(ascent_pitch) * up
-    forward_axis, right_axis, up_axis = build_aircraft_body_axes(forward, up)
+    horizontal_direction = np.cos(launch_azimuth) * north + np.sin(launch_azimuth) * east
+    horizontal_direction /= max(np.linalg.norm(horizontal_direction), 1e-6)
+
+    forward_axis = up
+    right_axis = np.cross(horizontal_direction, forward_axis)
+    right_axis /= max(np.linalg.norm(right_axis), 1e-6)
+    up_axis = np.cross(right_axis, forward_axis)
+    up_axis /= max(np.linalg.norm(up_axis), 1e-6)
     return project_to_rotation_matrix(np.column_stack([forward_axis, right_axis, up_axis]))
 
 
@@ -147,10 +158,9 @@ def run_ballistic_missile_scenario(
         peak_altitude,
         stages,
     )
-    initial_orientation = _orientation_from_ascent_azimuth(
+    initial_orientation = _vertical_launch_orientation(
         initial_position_ecef,
         controller_kwargs["launch_azimuth"],
-        0.5 * np.pi,
     )
     initial_velocity = np.zeros(3)
     initial_body_rates = np.zeros(3)
