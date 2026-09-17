@@ -406,6 +406,9 @@ def _velocity_from_heading_speed(position_ecef, heading, speed, flight_path_angl
 
 
 
+# Keep this list in sync with the explicit broker publishes in this file, plus the
+# engine-level `platform_registered` event emitted when the released missile joins a
+# running simulation.
 SCENARIO_EVENT_TOPICS = [
     "platform_registered",
     "missile_release",
