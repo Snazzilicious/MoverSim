@@ -8,17 +8,90 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from mover_sim.math.coordinates import lla_to_ecef
 
+AirLaunchedCruiseMissileMover = FixedWingMover
+
+class AirLaunchedCruiseMissilController(FixedWingAutopilot):
+
+    def __init__( self, ..., guidance_delay ):
+        self.t_launch = None
+
+    def initialize(self, engine):
+        self.t_launch = engine.t # save time of launch to begin delay timer
+        super().initialize(engine)
+        if not self._drop_start_published:
+            engine.broker.publish("missile_drop_start", self.platform)
+            self._drop_start_published = True
+
+    def update( self, t, engine ):
+        if t - self.t_launch < self.guidance_delay:
+            return
+        if not self._drop_end_published:
+            engine.broker.publish("missile_drop_end", self.platform)
+            self._drop_end_published = True
+        
+        super().update( t, engine )
+
+
+AirLaunchedCruiseMissileMothershipMover = FixedWingMover
+AirLaunchedCruiseMissileMothershipController = FixedWingAutopilot
+
+
+class MissileLaunchEvent:
+    def __init__( self, missile_launch_time ):
+        ...
+
+    @property
+    def time(self):
+        return self.missile_launch_time
+    
+    @property
+    def name(self):
+        return "Missile launch"
+    
+    @property
+    def interval(self):
+        return None
+    
+    def callback( self, engine ):
+        engine.broker.publish("missile_drop_end", self.platform)
+
+        # spawn missile with same state as mothership
+        engine.register_platform(...)
+
+        # schedule a begin-rtb event 1-2 seconds in the future
+        rtb = MothershipRTBEvent( engine.t + 2, mothership_platform )
+        engine.schedule( rtb.time, rtb, rtb.name, rtb.interval )
+
+class MothershipRTBEvent:
+    def __init__( self, time, mothership_platform ):
+        ...
+
+    @property
+    def time(self):
+        return self._time
+    
+    @property
+    def name(self):
+        return "Mothership RTB"
+    
+    @property
+    def interval(self):
+        return None
+    
+    def callback( self, engine ):
+        engine.broker.publish("mothership_rtb_start", self.platform)
+
+        # Add 'home' waypoint to mothership's autopilot and ensure it is tracking it
+        # can probably be like 100 km diectly behind the mover
+
+
 
 SCENARIO_EVENT_TOPICS = [
     "platform_registered",
     "missile_release",
     "missile_drop_start",
     "missile_drop_end",
-    "missile_ignite",
-    "missile_cruise_established",
     "mothership_rtb_start",
-    "mothership_rtb_arrival",
-    "missile_ground_impact",
 ]
 
 
@@ -87,25 +160,13 @@ def run_air_launched_cruise_missile_scenario(
         cruise_speed=mothership_cruise_speed,
         cruise_altitude=mothership_cruise_altitude,
         cruise_heading=mothership_cruise_heading,
-        rtb_position_ecef=mothership_rtb_position_ecef,
+        rtb_position_ecef=mothership_rtb_position_ecef
     )
     mothership_platform = Platform("mothership", mothership_mover, mothership_controller)
     engine.register_platform(mothership_platform)
 
-    def spawn_missile(current_engine, current_mothership_platform):
-        _spawn_released_missile(
-            current_engine,
-            current_mothership_platform,
-            missile_launch_time,
-            missile_cruise_speed,
-            missile_cruise_altitude,
-            missile_cruise_heading,
-            missile_drop_duration,
-        )
-        _begin_mothership_rtb(current_engine, current_mothership_platform)
-
-    release_callback = _make_missile_release_callback(mothership_platform, spawn_missile)
-    engine.schedule(missile_launch_time, release_callback, "MissileRelease")
+    missile_launch = MissileLaunchEvent( missile_launch_time )
+    engine.schedule( missile_launch.time, missile_launch, missile_launch.name, missile_launch.interval )
 
     logger = HDF5Logger(
         engine,

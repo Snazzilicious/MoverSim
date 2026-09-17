@@ -41,6 +41,7 @@ class SurfaceLaunchedCruiseMissileController(FixedWingAutopilot):
         self.platform.mover.stage = CRUISE_PHASE
         if not self._boost_end_published:
             engine.broker.publish("boost_end", self.platform)
+            self._boost_end_published = True
         
         super().update( t, engine )
     
