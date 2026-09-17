@@ -16,8 +16,6 @@
     * mover_sim/hdf5_utils.py
     * others?
 
-air launch
-    * Test that mother ship holds its course
 ballistic
 
 ### Grand TODO

@@ -239,6 +239,47 @@ def test_mothership_rtb_event_switches_controller_mode_and_publishes_event():
     assert rtb_events == ["mothership"]
 
 
+def test_air_launched_mothership_cruise_guidance_holds_course_prior_to_rtb():
+    engine = SimulationEngine()
+    engine.max_step = 0.05
+
+    position = np.array(lla_to_ecef(0.0, 0.0, 1500.0), dtype=float)
+    velocity = _velocity_from_heading_speed(position, 0.0, 200.0)
+
+    mover = AirLaunchedCruiseMissileMothershipMover(
+        initial_position=position,
+        initial_velocity=velocity,
+        initial_body_rates=np.zeros(3),
+    )
+    controller = AirLaunchedCruiseMissileMothershipController(
+        cruise_speed=200.0,
+        cruise_altitude=1500.0,
+        cruise_heading=0.0,
+        update_interval=0.05,
+    )
+    platform = Platform("mothership", mover, controller)
+    engine.register_platform(platform)
+
+    initial_heading_error = abs(
+        controller._heading_error_to_direction(
+            mover,
+            controller._desired_cruise_horizontal_direction(mover),
+        )
+    )
+
+    engine.run(5.0)
+
+    final_heading_error = abs(
+        controller._heading_error_to_direction(
+            mover,
+            controller._desired_cruise_horizontal_direction(mover),
+        )
+    )
+
+    assert initial_heading_error < 1e-9
+    assert final_heading_error < np.radians(5.0)
+
+
 def test_air_launched_mothership_rtb_guidance_holds_aligned_course_and_closes_distance():
     engine = SimulationEngine()
     engine.max_step = 0.05

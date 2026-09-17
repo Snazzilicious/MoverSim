@@ -11,7 +11,6 @@ from mover_sim.core.engine import SimulationEngine
 from mover_sim.core.observer import HDF5Logger
 from mover_sim.core.platform import Platform
 from mover_sim.math.coordinates import ecef_to_lla, lla_to_ecef
-from mover_sim.math.orientation import build_aircraft_body_axes, project_to_rotation_matrix
 from mover_sim.models.aircraft_mover import FixedWingAutopilot, FixedWingMover
 
 AirLaunchedCruiseMissileMover = FixedWingMover
