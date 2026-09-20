@@ -2,16 +2,10 @@
 
 ### Grand TODO
 
-* Redesign Aircraft movers
-    * Remove quaternions everywhere
-        * redesign AircraftSplineMover
-    * Revisit FixedWingMover
-        * add helpers and properties and setters like RocketMover has
-        * update Autopilot to use them
-        * (make them consistent)
-* Redesign plotting
-* Identify duplicated functions
-    * local_enu_basis
+* Revisit FixedWingMover
+    * add helpers and properties and setters like RocketMover has
+    * update Autopilot to use them
+    * (make them consistent)
 * Future features (need not be added yet, but ideally not precluded)
     * despawn platform (e.g. if crashes into ground or something)
         * disable controller and don't reschedule when it comes up

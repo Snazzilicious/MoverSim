@@ -151,3 +151,24 @@ def enu_to_ecef(e, n, u, lat_ref_deg, lon_ref_deg, alt_ref_m):
     z = z_ref + dz
     
     return x, y, z
+
+def local_enu_basis(position_ecef):
+    """
+    Return local East, North, and Up unit vectors in ECEF given an ECEF position vector.
+    """
+    position = np.asarray(position_ecef, dtype=float)
+    position_norm = np.linalg.norm(position)
+    if position.shape != (3,) or position_norm < 1e-8:
+        return np.array([0.0, 1.0, 0.0]), np.array([0.0, 0.0, 1.0]), np.array([1.0, 0.0, 0.0])
+
+    lat_deg, lon_deg, _ = ecef_to_lla(position[0], position[1], position[2])
+    lat = np.radians(lat_deg)
+    lon = np.radians(lon_deg)
+    east = np.array([-np.sin(lon), np.cos(lon), 0.0])
+    north = np.array([
+        -np.sin(lat) * np.cos(lon),
+        -np.sin(lat) * np.sin(lon),
+        np.cos(lat),
+    ])
+    up = position / position_norm
+    return east, north, up

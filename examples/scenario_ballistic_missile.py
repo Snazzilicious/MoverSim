@@ -10,7 +10,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from mover_sim.core.engine import SimulationEngine
 from mover_sim.core.observer import HDF5Logger
 from mover_sim.core.platform import Platform
-from mover_sim.math.coordinates import ecef_to_lla, lla_to_ecef
+from mover_sim.math.coordinates import ecef_to_lla, lla_to_ecef, local_enu_basis
 from mover_sim.math.orientation import project_to_rotation_matrix
 from mover_sim.models.aircraft_mover import RocketController, RocketMover
 
@@ -23,28 +23,10 @@ SCENARIO_EVENT_TOPICS = [
 ]
 
 
-def _local_enu_basis(position_ecef):
-    position = np.asarray(position_ecef, dtype=float)
-    if position.shape != (3,):
-        raise ValueError("position_ecef must have shape (3,)")
-
-    lat_deg, lon_deg, _ = ecef_to_lla(position[0], position[1], position[2])
-    lat = np.radians(lat_deg)
-    lon = np.radians(lon_deg)
-    east = np.array([-np.sin(lon), np.cos(lon), 0.0])
-    north = np.array([
-        -np.sin(lat) * np.cos(lon),
-        -np.sin(lat) * np.sin(lon),
-        np.cos(lat),
-    ])
-    up = position / max(np.linalg.norm(position), 1e-6)
-    return east, north, up
-
-
 def _derive_ascent_azimuth(initial_position_ecef, target_position_ecef):
     initial_position = np.asarray(initial_position_ecef, dtype=float)
     target_position = np.asarray(target_position_ecef, dtype=float)
-    east, north, up = _local_enu_basis(initial_position)
+    east, north, up = local_enu_basis(initial_position)
 
     rel = target_position - initial_position
     rel_horizontal = rel - np.dot(rel, up) * up
@@ -60,7 +42,7 @@ def _vertical_launch_orientation(position_ecef, launch_azimuth):
     reference about that vertical axis so the subsequent pitch-over occurs in the
     intended horizontal plane.
     """
-    east, north, up = _local_enu_basis(position_ecef)
+    east, north, up = local_enu_basis(position_ecef)
     horizontal_direction = np.cos(launch_azimuth) * north + np.sin(launch_azimuth) * east
     horizontal_direction /= max(np.linalg.norm(horizontal_direction), 1e-6)
 

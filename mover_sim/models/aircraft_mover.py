@@ -4,7 +4,7 @@ from mover_sim.core.controller import Controller
 from mover_sim.core.engine import Event
 from mover_sim.core.platform import Platform
 from mover_sim.math.physics import aerodynamic_drag_force, air_density, centrifugal_acceleration, coriolis_acceleration, coriolis_vector, gravity, GM
-from mover_sim.math.coordinates import ecef_to_lla, ecef_to_enu, lla_to_ecef
+from mover_sim.math.coordinates import ecef_to_lla, ecef_to_enu, lla_to_ecef, local_enu_basis
 from mover_sim.math.orientation import (
     build_aircraft_body_axes,
     normalize_quaternion,
@@ -1736,24 +1736,6 @@ class RocketController(Controller):
             return 0.0
         return max(float(t) - self.phase_start_time, 0.0)
 
-    def _local_enu_basis(self, position):
-        position = np.asarray(position, dtype=float)
-        position_norm = np.linalg.norm(position)
-        if position.shape != (3,) or position_norm < 1e-8:
-            return np.array([0.0, 1.0, 0.0]), np.array([0.0, 0.0, 1.0]), np.array([1.0, 0.0, 0.0])
-
-        lat_deg, lon_deg, _ = ecef_to_lla(position[0], position[1], position[2])
-        lat = np.radians(lat_deg)
-        lon = np.radians(lon_deg)
-        east = np.array([-np.sin(lon), np.cos(lon), 0.0])
-        north = np.array([
-            -np.sin(lat) * np.cos(lon),
-            -np.sin(lat) * np.sin(lon),
-            np.cos(lat),
-        ])
-        up = position / position_norm
-        return east, north, up
-
     def _current_horizontal_direction(self, mover, east, north, up):
         forward_horizontal = mover.forward_axis - np.dot(mover.forward_axis, up) * up
         horizontal_norm = np.linalg.norm(forward_horizontal)
@@ -1765,7 +1747,7 @@ class RocketController(Controller):
         if self.launch_azimuth is not None:
             return self.launch_azimuth
 
-        east, north, up = self._local_enu_basis(mover.position)
+        east, north, up = local_enu_basis(mover.position)
         if self.target_position_ecef is not None:
             rel = self.target_position_ecef - mover.position
             rel_horizontal = rel - np.dot(rel, up) * up
@@ -1807,7 +1789,7 @@ class RocketController(Controller):
             self._enter_phase(self.POWERED_ASCENT, t)
 
     def _desired_forward_direction(self, t, mover):
-        east, north, up = self._local_enu_basis(mover.position)
+        east, north, up = local_enu_basis(mover.position)
         if self.phase == self.BOOST_VERTICAL:
             return up
         if self.phase not in (self.PITCH_OVER, self.POWERED_ASCENT):

@@ -10,7 +10,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from mover_sim.core.engine import SimulationEngine
 from mover_sim.core.observer import HDF5Logger
 from mover_sim.core.platform import Platform
-from mover_sim.math.coordinates import ecef_to_lla, lla_to_ecef
+from mover_sim.math.coordinates import ecef_to_lla, lla_to_ecef, local_enu_basis
 from mover_sim.models.aircraft_mover import FixedWingAutopilot, FixedWingMover
 
 AirLaunchedCruiseMissileMover = FixedWingMover
@@ -54,7 +54,7 @@ class AirLaunchedCruiseMissileController(FixedWingAutopilot):
         # `cruise_heading` is defined in the missile's local ENU frame, so resolve the
         # desired world-frame direction from the current position rather than storing one
         # fixed ECEF direction at cruise entry.
-        east, north, _ = _local_enu_basis(mover.position)
+        east, north, _ = local_enu_basis(mover.position)
         desired_horizontal = (
             np.cos(self.cruise_heading) * north
             + np.sin(self.cruise_heading) * east
@@ -168,7 +168,7 @@ class AirLaunchedCruiseMissileMothershipController(FixedWingAutopilot):
         return vector
 
     def _desired_cruise_horizontal_direction(self, mover):
-        east, north, _ = _local_enu_basis(mover.position)
+        east, north, _ = local_enu_basis(mover.position)
         desired_horizontal = (
             np.cos(self.cruise_heading) * north
             + np.sin(self.cruise_heading) * east
@@ -371,25 +371,6 @@ class MothershipRTBEvent:
         engine.broker.publish("mothership_rtb_start", self.mothership_platform)
 
 
-def _local_enu_basis(position_ecef):
-    position = np.asarray(position_ecef, dtype=float)
-    if position.shape != (3,):
-        raise ValueError("position_ecef must have shape (3,)")
-
-    lat_deg, lon_deg, _ = ecef_to_lla(position[0], position[1], position[2])
-    lat = np.radians(lat_deg)
-    lon = np.radians(lon_deg)
-
-    east = np.array([-np.sin(lon), np.cos(lon), 0.0])
-    north = np.array([
-        -np.sin(lat) * np.cos(lon),
-        -np.sin(lat) * np.sin(lon),
-        np.cos(lat),
-    ])
-    up = position / max(np.linalg.norm(position), 1e-6)
-    return east, north, up
-
-
 def _velocity_from_heading_speed(position_ecef, heading, speed, flight_path_angle=0.0):
     heading = float(heading)
     speed = float(speed)
@@ -397,7 +378,7 @@ def _velocity_from_heading_speed(position_ecef, heading, speed, flight_path_angl
     if speed <= 0.0:
         raise ValueError("speed must be greater than 0")
 
-    east, north, up = _local_enu_basis(position_ecef)
+    east, north, up = local_enu_basis(position_ecef)
     horizontal_direction = np.cos(heading) * north + np.sin(heading) * east
     direction = np.cos(flight_path_angle) * horizontal_direction + np.sin(flight_path_angle) * up
     direction /= max(np.linalg.norm(direction), 1e-6)
