@@ -7,15 +7,16 @@ import numpy as np
 from mover_sim.core.engine import SimulationEngine
 from mover_sim.core.observer import CSVLogger, HDF5Logger
 from mover_sim.core.platform import Platform
-from mover_sim.models.aircraft_mover import Aircraft6DOFMover, AircraftMover
+from mover_sim.models.aircraft_mover import AircraftMover
 from mover_sim.models.spline_mover import AircraftSplineMover
 from mover_sim.math.coordinates import enu_to_ecef, lla_to_ecef
 
 
 def _make_6dof_platform(platform_id="rigid"):
-    pos = lla_to_ecef(0.0, 0.0, 1500.0)
-    vel = np.array([0.0, 150.0, 0.0])
-    mover = Aircraft6DOFMover(pos, vel, area=0.0, use_coriolis=False)
+    times = [0.0, 10.0]
+    pos0 = lla_to_ecef(0.0, 0.0, 1500.0)
+    pos1 = lla_to_ecef(0.0, 0.02, 1500.0)
+    mover = AircraftSplineMover(times, [pos0, pos1])
     return Platform(platform_id, mover)
 
 

@@ -56,12 +56,13 @@ State model:
 - the engine integrates arbitrary-length state vectors for integrated movers
 - movers define how to interpret their own state layout
 - translational movers conventionally use `[x, y, z, vx, vy, vz]`
-- rigid-body aircraft movers use 13 state elements: position 3, velocity 3, quaternion 4, body rates 3
+- rigid-body aircraft and rocket movers use 18+ element states with rotation matrix attitude and body angular rates (`FixedWingMover`, `RocketMover`)
 
-Built-in aircraft movers:
+Built-in aircraft and rocket models:
 - `AircraftMover`: translational point-mass aircraft model
 - `AircraftSplineMover`: analytical aircraft path follower with derived quaternion attitude
-- `Aircraft6DOFMover`: rigid-body aircraft model with quaternion attitude and body rates
+- `FixedWingMover`: rigid-body aircraft mover with rotation matrix attitude and body rates (`FixedWingAutopilot`)
+- `RocketMover`: rigid-body rocket mover with multi-stage support, propellant mass, and aerodynamics (`RocketController`)
 
 Logging:
 - `CSVLogger`: flat long-row export format, one row per platform sample

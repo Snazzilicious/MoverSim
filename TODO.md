@@ -4,7 +4,6 @@
 
 * Redesign Aircraft movers
     * Remove old aircraft mover(s)
-        * Aircraft6DOFMover, Aircraft6DOFAutopilot
         * Update AircraftSplineMover to use fru instead of quaternions 
         * Rewrite scenarios
     * Remove quaternions everywhere
@@ -22,6 +21,9 @@
         * update Autopilot to use them
         * (make them consistent)
     * Maybe separate out FixedWingMover and RocketMover
+    * update docs
+        * references to built-in movers
+        * references to rigid state
 * Identify duplicated functions
     * local_enu_basis
 * Future features (need not be added yet, but ideally not precluded)

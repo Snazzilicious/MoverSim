@@ -140,12 +140,13 @@ Current movers include:
 - `SplineMover` and `WaypointMover`: translational analytical movers
 - `AircraftSplineMover`: analytical aircraft mover with 13-element state
 - `AircraftMover`: translational point-mass aircraft mover
-- `Aircraft6DOFMover`: rigid-body aircraft mover with 13-element state
+- `FixedWingMover`: rigid-body aircraft mover with rotation matrix attitude and body rates (`FixedWingAutopilot`)
+- `RocketMover`: rigid-body rocket mover with multi-stage support, propellant mass, and aerodynamic moments (`RocketController`)
 
-Rigid-body aircraft state layout:
+Rigid-body aircraft state layout (`FixedWingMover`):
 
 ```text
-[x, y, z, vx, vy, vz, qw, qx, qy, qz, p, q, r]
+[x, y, z, vx, vy, vz, o11, o12, o13, o21, o22, o23, o31, o32, o33, w1, w2, w3]
 ```
 
 ### `Controller`

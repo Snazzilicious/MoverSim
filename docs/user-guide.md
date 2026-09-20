@@ -231,17 +231,18 @@ engine.run(10.0)
 print(vehicle.mover.position)  # [100, 200, 300]
 ```
 
-### Aircraft Models
+### Aircraft and Rocket Models
 
-Built-in aircraft paths now include:
+Built-in aircraft and rocket models now include:
 - `AircraftMover`: translational point-mass aircraft model
 - `AircraftSplineMover`: analytical aircraft mover with a 13-element state
-- `Aircraft6DOFMover`: rigid-body aircraft mover with a 13-element state
+- `FixedWingMover`: rigid-body aircraft mover with rotation matrix attitude and body rates (`FixedWingAutopilot`)
+- `RocketMover`: rigid-body rocket mover with multi-stage support, propellant mass, and aerodynamics (`RocketController`)
 
-Rigid-body aircraft state layout:
+Rigid-body aircraft state layout (`FixedWingMover`):
 
 ```text
-[x, y, z, vx, vy, vz, qw, qx, qy, qz, p, q, r]
+[x, y, z, vx, vy, vz, o11, o12, o13, o21, o22, o23, o31, o32, o33, w1, w2, w3]
 ```
 
 ### Logging
