@@ -16,9 +16,6 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-plotting = [
-    "plotly>=5.0.0",
-]
 dev = [
     "pytest>=7.0.0",
 ]
