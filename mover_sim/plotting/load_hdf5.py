@@ -14,8 +14,6 @@ TRACK_DATASET_MAP = {
     "position": "position_ecef",
     "velocity": "velocity_ecef",
     "lla": "lla",
-    "orientation": "orientation",
-    "body_rates": "body_rates",
 }
 
 

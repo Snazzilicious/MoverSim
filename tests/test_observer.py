@@ -59,8 +59,6 @@ def test_csv_logger_long_rows_preserve_translational_fields(tmp_path):
     assert row["x"] != ""
     assert row["lat"] != ""
     assert row["vx"] != ""
-    assert row["qw"] == ""
-    assert row["p"] == ""
     assert len(json.loads(row["state_json"])) == 6
 
 
@@ -89,9 +87,6 @@ def test_csv_logger_supports_dynamic_registration_mixed_dimensions_and_orientati
     assert rigid_rows
     assert all(row["state_dim"] == "6" for row in point_rows)
     assert all(row["state_dim"] == "13" for row in rigid_rows)
-    assert any(row["qw"] != "" for row in rigid_rows)
-    assert any(row["p"] != "" for row in rigid_rows)
-    assert all(row["qw"] == "" for row in point_rows)
 
 
 def test_csv_logger_writes_event_csv(tmp_path):
@@ -165,10 +160,6 @@ def test_hdf5_logger_supports_mixed_dimensions_and_dynamic_registration(tmp_path
         assert rigid.attrs["state_dim"] == 13
         assert point["state"].shape[1] == 6
         assert rigid["state"].shape[1] == 13
-        assert "orientation" not in point
-        assert "body_rates" not in point
-        assert "orientation" in rigid
-        assert "body_rates" in rigid
 
 
 def test_hdf5_logger_writes_event_table(tmp_path):
@@ -193,23 +184,7 @@ def test_hdf5_logger_writes_event_table(tmp_path):
         assert "rigid" in platform_ids
 
 
-def test_hdf5_logger_records_orientation_and_body_rates_for_analytical_aircraft(tmp_path):
-    engine = SimulationEngine()
-    platform = _make_aircraft_spline_platform("spline")
-    engine.register_platform(platform)
 
-    log_file = tmp_path / "telemetry.h5"
-    with h5py.File(log_file, "w") as h5:
-        HDF5Logger(engine, h5.create_group("run"), sample_interval=0.5, batch_size=10)
-        engine.run(1.0)
-
-    with h5py.File(log_file, "r") as h5:
-        group = h5["run"]["trajectories"]["spline"]
-        assert group.attrs["state_dim"] == 13
-        assert "orientation" in group
-        assert "body_rates" in group
-        assert group["orientation"].shape[1] == 4
-        assert group["body_rates"].shape[1] == 3
 
 
 def test_hdf5_logger_writes_beneath_provided_subgroup(tmp_path):

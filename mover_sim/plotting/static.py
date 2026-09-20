@@ -18,7 +18,7 @@ from mover_sim.plotting.transforms import (
 )
 
 
-DEFAULT_SUMMARY_SECTIONS = ("trajectory", "position", "velocity", "orientation", "events")
+DEFAULT_SUMMARY_SECTIONS = ("trajectory", "position", "velocity", "events")
 
 
 def _import_matplotlib():
@@ -227,42 +227,7 @@ def _local_aircraft_attitude_from_enu_axes(forward_enu, right_enu):
     return np.array([roll, pitch, yaw])
 
 
-def _orientation_to_local_rpy_degrees(track):
-    lla = _track_lla(track)
-    if lla is None or track.orientation is None:
-        return None
 
-    euler_radians = []
-    for quaternion, (lat_deg, lon_deg, alt_m) in zip(np.asarray(track.orientation, dtype=float), lla):
-        forward_enu, right_enu, _ = _enu_body_axes_from_quaternion(quaternion, lat_deg, lon_deg, alt_m)
-        euler_radians.append(_local_aircraft_attitude_from_enu_axes(forward_enu, right_enu))
-
-    euler_radians = np.vstack(euler_radians)
-    return np.degrees(euler_radians)
-
-
-def _plot_orientation_panel(ax, platforms, colors):
-    components = ("roll", "pitch", "yaw")
-    linestyles = ("-", "--", ":", "-.")
-    for platform_id, track in platforms.items():
-        if track.orientation is None or len(track.orientation) == 0:
-            continue
-        orientation = _orientation_to_local_rpy_degrees(track)
-        if orientation is None or len(orientation) == 0:
-            continue
-        for index, component in enumerate(components):
-            ax.plot(
-                track.time,
-                orientation[:, index],
-                color=colors[platform_id],
-                linestyle=linestyles[index],
-                label=f"{platform_id} {component}",
-            )
-
-    ax.set_title("Orientation vs Time")
-    ax.set_xlabel("Time (s)")
-    ax.set_ylabel("Angle (deg)")
-    ax.grid(True)
 
 
 def _add_event_markers(ax, events):
@@ -321,7 +286,7 @@ def plot_run_summary(run, platform_ids=None, event_topics=None, sections=None):
     mapped_events = map_events_to_positions(run, event_topics=event_topics, platform_ids=platform_ids)
 
     time_series_sections = [
-        section for section in enabled_sections if section in ("position", "velocity", "orientation")
+        section for section in enabled_sections if section in ("position", "velocity")
     ]
     has_top_row = any(section in enabled_sections for section in ("trajectory", "events"))
     row_count = len(time_series_sections) + (1 if has_top_row else 0)
@@ -356,8 +321,6 @@ def plot_run_summary(run, platform_ids=None, event_topics=None, sections=None):
             _plot_position_panel(ax, platforms, colors)
         elif section == "velocity":
             _plot_velocity_panel(ax, platforms, colors)
-        elif section == "orientation":
-            _plot_orientation_panel(ax, platforms, colors)
         _add_event_markers(ax, events)
         if ax.lines:
             ax.legend(loc="best", ncols=2, fontsize="small")

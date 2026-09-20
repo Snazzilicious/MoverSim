@@ -114,8 +114,6 @@ def panel_data_availability(platforms: dict[str, PlatformTrack], events=None) ->
         "trajectory": any(track.position_ecef is not None and len(track.position_ecef) > 0 for track in tracks),
         "position": any(track.position_ecef is not None and len(track.position_ecef) > 0 for track in tracks),
         "velocity": any(track.velocity_ecef is not None and len(track.velocity_ecef) > 0 for track in tracks),
-        "orientation": any(track.orientation is not None and len(track.orientation) > 0 for track in tracks),
-        "body_rates": any(track.body_rates is not None and len(track.body_rates) > 0 for track in tracks),
         "events": bool(events),
     }
 

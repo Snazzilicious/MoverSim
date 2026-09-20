@@ -11,23 +11,12 @@ from mover_sim.plotting.transforms import compute_speed, filter_events, select_p
 matplotlib.use("Agg")
 
 
-def _yaw_quaternion(yaw_degrees):
-    yaw_radians = np.radians(yaw_degrees)
-    return np.array([
-        np.cos(yaw_radians / 2.0),
-        0.0,
-        0.0,
-        np.sin(yaw_radians / 2.0),
-    ])
-
-
 def _write_run_file(
     path,
     *,
     include_events=True,
     include_second_platform=True,
     include_velocity=True,
-    include_orientation=True,
     include_lla=True,
 ):
     alpha_time = np.array([0.0, 1.0, 2.0], dtype=float)
@@ -40,16 +29,6 @@ def _write_run_file(
         [100.0, 10.0, 2.0],
         [105.0, 11.0, 3.0],
         [110.0, 12.0, 4.0],
-    ])
-    alpha_orientation = np.vstack([
-        _yaw_quaternion(0.0),
-        _yaw_quaternion(10.0),
-        _yaw_quaternion(20.0),
-    ])
-    alpha_body_rates = np.array([
-        [0.0, 0.0, 0.01],
-        [0.0, 0.0, 0.02],
-        [0.0, 0.0, 0.03],
     ])
 
     with h5py.File(path, "w") as h5:
@@ -67,9 +46,6 @@ def _write_run_file(
             alpha.create_dataset("velocity", data=alpha_velocity)
         if include_lla:
             alpha.create_dataset("lla", data=np.column_stack([alpha_lat, alpha_lon, alpha_alt]))
-        if include_orientation:
-            alpha.create_dataset("orientation", data=alpha_orientation)
-            alpha.create_dataset("body_rates", data=alpha_body_rates)
         alpha.create_dataset("state", data=np.column_stack([alpha_position, alpha_velocity]))
 
         if include_second_platform:
@@ -112,7 +88,6 @@ def test_load_hdf5_run_tolerates_missing_optional_datasets(tmp_path):
         include_events=False,
         include_second_platform=False,
         include_velocity=False,
-        include_orientation=False,
         include_lla=False,
     )
 
@@ -121,8 +96,6 @@ def test_load_hdf5_run_tolerates_missing_optional_datasets(tmp_path):
 
     assert run.events == []
     assert track.velocity_ecef is None
-    assert track.orientation is None
-    assert track.body_rates is None
     assert track.lla is None
 
 
@@ -189,7 +162,6 @@ def test_plot_run_summary_returns_figure_object(tmp_path):
 
     assert figure.__class__.__name__ == "Figure"
     assert any(ax.get_title() == "Trajectory (ECEF)" for ax in figure.axes)
-    assert any(ax.get_title() == "Orientation vs Time" for ax in figure.axes)
 
 
 def test_plot_run_summary_omits_empty_panels(tmp_path):
@@ -199,7 +171,6 @@ def test_plot_run_summary_omits_empty_panels(tmp_path):
         include_events=False,
         include_second_platform=False,
         include_velocity=False,
-        include_orientation=False,
         include_lla=False,
     )
     run = load_hdf5_run(path)
@@ -210,7 +181,6 @@ def test_plot_run_summary_omits_empty_panels(tmp_path):
     assert "Trajectory (ECEF)" in titles
     assert "Position vs Time" in titles
     assert "Velocity vs Time" not in titles
-    assert "Orientation vs Time" not in titles
 
 
 def test_plot_run_summary_does_not_fail_on_sparse_runs(tmp_path):
@@ -220,7 +190,6 @@ def test_plot_run_summary_does_not_fail_on_sparse_runs(tmp_path):
         include_events=False,
         include_second_platform=False,
         include_velocity=False,
-        include_orientation=False,
         include_lla=False,
     )
     run = load_hdf5_run(path)

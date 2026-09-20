@@ -40,8 +40,6 @@ class PlatformTrack:
     position_ecef: np.ndarray | None = None
     velocity_ecef: np.ndarray | None = None
     lla: np.ndarray | None = None
-    orientation: np.ndarray | None = None
-    body_rates: np.ndarray | None = None
 
 
 @dataclass

@@ -144,16 +144,6 @@ class BaseTrajectoryLogger:
             return getattr(value, "id")
         return repr(value)
 
-    def _slice_optional_state(self, state, mover, method_name, expected_size):
-        if not hasattr(mover, method_name):
-            return None
-
-        state_slice = getattr(mover, method_name)()
-        values = np.asarray(state[state_slice], dtype=float).copy()
-        if values.shape != (expected_size,):
-            return None
-        return values
-
     def _extract_platform_record(self, t, platform_id):
         """Build a normalized record dict for one platform sample."""
         platform = self.engine.platforms[platform_id]
@@ -168,8 +158,6 @@ class BaseTrajectoryLogger:
             "position": None,
             "velocity": None,
             "lla": None,
-            "orientation": None,
-            "body_rates": None,
         }
 
         if hasattr(mover, "position"):
@@ -186,8 +174,6 @@ class BaseTrajectoryLogger:
             pos = record["position"]
             record["lla"] = np.array(ecef_to_lla(pos[0], pos[1], pos[2]), dtype=float)
 
-        record["orientation"] = self._slice_optional_state(state, mover, "get_orientation_slice", 4)
-        record["body_rates"] = self._slice_optional_state(state, mover, "get_body_rate_slice", 3)
         return record
 
     def _on_sim_start(self, t):
@@ -285,13 +271,6 @@ class CSVLogger(BaseTrajectoryLogger):
             "vx",
             "vy",
             "vz",
-            "qw",
-            "qx",
-            "qy",
-            "qz",
-            "p",
-            "q",
-            "r",
             "state_json",
         ])
 
@@ -309,8 +288,6 @@ class CSVLogger(BaseTrajectoryLogger):
             pos = record["position"]
             vel = record["velocity"]
             lla = record["lla"]
-            orientation = record["orientation"]
-            body_rates = record["body_rates"]
             state_json = json.dumps(record["state"].tolist()) if record["state"] is not None else ""
 
             self.writer.writerow([
@@ -326,13 +303,6 @@ class CSVLogger(BaseTrajectoryLogger):
                 vel[0] if vel is not None else "",
                 vel[1] if vel is not None else "",
                 vel[2] if vel is not None else "",
-                orientation[0] if orientation is not None else "",
-                orientation[1] if orientation is not None else "",
-                orientation[2] if orientation is not None else "",
-                orientation[3] if orientation is not None else "",
-                body_rates[0] if body_rates is not None else "",
-                body_rates[1] if body_rates is not None else "",
-                body_rates[2] if body_rates is not None else "",
                 state_json,
             ])
 
@@ -456,8 +426,7 @@ class HDF5Logger(BaseTrajectoryLogger):
         group.attrs["state_dim"] = state_dim
         group.attrs["schema_version"] = "1"
         group.attrs["field_descriptions"] = (
-            "time, state, optional position, optional velocity, optional lla, "
-            "optional orientation, optional body_rates"
+            "time, state, optional position, optional velocity, optional lla"
         )
 
         kwargs = self._dataset_kwargs()
@@ -470,10 +439,6 @@ class HDF5Logger(BaseTrajectoryLogger):
             group.create_dataset("velocity", shape=(0, 3), maxshape=(None, 3), dtype=np.float64, **kwargs)
         if first_record["lla"] is not None:
             group.create_dataset("lla", shape=(0, 3), maxshape=(None, 3), dtype=np.float64, **kwargs)
-        if first_record["orientation"] is not None:
-            group.create_dataset("orientation", shape=(0, 4), maxshape=(None, 4), dtype=np.float64, **kwargs)
-        if first_record["body_rates"] is not None:
-            group.create_dataset("body_rates", shape=(0, 3), maxshape=(None, 3), dtype=np.float64, **kwargs)
         return group
 
     def _append_dataset(self, dataset, values):
@@ -510,12 +475,6 @@ class HDF5Logger(BaseTrajectoryLogger):
         if "lla" in group:
             llas = np.vstack([record["lla"] for record in records])
             self._append_dataset(group["lla"], llas)
-        if "orientation" in group:
-            orientations = np.vstack([record["orientation"] for record in records])
-            self._append_dataset(group["orientation"], orientations)
-        if "body_rates" in group:
-            body_rates = np.vstack([record["body_rates"] for record in records])
-            self._append_dataset(group["body_rates"], body_rates)
 
     def _write_event_batch(self, events):
         if not self.events_group or not events:
